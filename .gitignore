@@ -1,0 +1,7 @@
+node_modules/
+release/
+dist/models/
+
+# --- local-only / large assets (not pushed) ---
+llm/
+dist/

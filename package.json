@@ -1,0 +1,50 @@
+{
+  "name": "amadeus-pet",
+  "version": "0.1.0",
+  "description": "Unofficial fan-made Live2D desktop pet inspired by the Amadeus system of Steins;Gate. Original code and UI; character model is replaceable (official Live2D sample models used as placeholder).",
+  "main": "electron/main.cjs",
+  "license": "MIT",
+  "scripts": {
+    "build:render": "vite build",
+    "watch:render": "vite build --watch",
+    "app": "electron .",
+    "start": "npm run build:render && electron .",
+    "pack": "npm run build:render && electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.fan.amadeus-pet",
+    "productName": "AMA-DEUS Pet",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "THIRD_PARTY_NOTICES",
+        "to": "THIRD_PARTY_NOTICES"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ],
+      "category": "Utility",
+      "executableName": "amadeus-pet"
+    },
+    "electronDist": "node_modules/electron/dist"
+  },
+  "devDependencies": {
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3",
+    "vite": "^8.2.1"
+  },
+  "dependencies": {
+    "pixi-live2d-display": "^0.4.0",
+    "pixi.js": "^6.5.10"
+  }
+}
