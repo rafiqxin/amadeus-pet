@@ -30,7 +30,11 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
-          npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7
+          # Keep the native plugin in the generated app dependency graph so
+          # Capacitor links the iOS implementation instead of only bundling JS.
+          npm install --save-exact @capacitor/core@7 @capacitor/ios@7 @capacitor-community/speech-recognition@7.0.1
+          npm install --save-dev --save-exact @capacitor/cli@7
+          npm ls @capacitor/core @capacitor/ios @capacitor-community/speech-recognition
 
       - name: Open mobile CALL route
         run: |
@@ -91,6 +95,13 @@ jobs:
           npx cap add ios
           npx cap sync ios
 
+      - name: Verify native SpeechRecognition registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -R -q 'CapacitorCommunitySpeechRecognition' ios/App/Podfile ios/App/Podfile.lock
+          echo "SpeechRecognition native iOS pod is registered."
+
       - name: Use Amadeus launcher icon
         run: |
           ICON_SRC="$RUNNER_TEMP/amadeus-launcher.png"
@@ -101,12 +112,16 @@ jobs:
           sips -z 1024 1024 "$ICON_SRC" --out "$ICON_DST" >/dev/null
           test -s "$ICON_DST"
 
-      - name: Configure full-screen app
+      - name: Configure full-screen app and speech permissions
         run: |
           PLIST="ios/App/App/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :UIStatusBarHidden bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIStatusBarHidden true" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :UIViewControllerBasedStatusBarAppearance bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIViewControllerBasedStatusBarAppearance false" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSSpeechRecognitionUsageDescription string 'AMA-DEUS uses speech recognition so you can talk to Kurisu.'" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSSpeechRecognitionUsageDescription 'AMA-DEUS uses speech recognition so you can talk to Kurisu.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'AMA-DEUS uses the microphone while you are speaking to Kurisu.'" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription 'AMA-DEUS uses the microphone while you are speaking to Kurisu.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :NSSpeechRecognitionUsageDescription" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$PLIST"
 
       - name: Build unsigned device app
         run: |
@@ -129,27 +144,29 @@ jobs:
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
           cd build
-          zip -qry AMA-DEUS-iOS-v0.1.0-unsigned.ipa Payload
-          shasum -a 256 AMA-DEUS-iOS-v0.1.0-unsigned.ipa
+          zip -qry AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa | tee AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-iOS-v0.1.0-unsigned-IPA
-          path: build/AMA-DEUS-iOS-v0.1.0-unsigned.ipa
+          name: AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned-IPA
+          path: |
+            build/AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa
+            build/AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa.sha256
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish GitHub Release
+      - name: Publish GitHub prerelease
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release ios v0.1.1-alpha.1]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="ios-v0.1.0"
-          FILE="build/AMA-DEUS-iOS-v0.1.0-unsigned.ipa"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$FILE" --clobber
-          else
-            gh release create "$TAG" "$FILE" \
-              --target "$GITHUB_SHA" \
-              --title "AMA-DEUS iOS v0.1.0" \
-              --notes "First stable iOS baseline: Amadeus mobile CALL UI, configurable LLM API, Live2D reaction control, 45 reference OGG reactions, and audio-driven lip sync. iOS speech input is intentionally disabled; speech input moves to the Android track. The IPA is unsigned and requires user-side signing for installation."
-          fi
+          TAG="ios-v0.1.1-alpha.1"
+          FILE="build/AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa"
+          SUM="build/AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa.sha256"
+          gh release create "$TAG" "$FILE" "$SUM" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "AMA-DEUS iOS v0.1.1 alpha 1" \
+            --notes "iOS speech-input preview. Enables the Capacitor Community SpeechRecognition native plugin, adds microphone and speech-recognition privacy descriptions, and keeps the existing CALL UI, Live2D reactions, API configuration, 45 reference OGG reactions, and audio-driven lip sync. Unsigned IPA; user-side signing is required for installation." \
+            --prerelease
