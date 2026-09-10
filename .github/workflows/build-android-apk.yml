@@ -1,0 +1,114 @@
+name: Build AMA-DEUS Android APK
+
+on:
+  push:
+    branches:
+      - chatgpt/android-mobile
+    paths:
+      - '.github/workflows/build-android-apk.yml'
+      - 'src/**'
+      - 'index.html'
+      - 'package.json'
+      - 'vite.config.js'
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor-community/speech-recognition@7.0.1
+
+      - name: Open mobile CALL route
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          s = p.read_text()
+          needle = '<script type="module" src="/src/main.js"></script>'
+          inject = '<script>location.hash = "#call";</script>\n  ' + needle
+          if needle not in s:
+              raise SystemExit('main.js script tag not found')
+          p.write_text(s.replace(needle, inject))
+          PY
+
+      - name: Bundle 45 Amadeus reference voice clips
+        shell: bash
+        run: |
+          set -euo pipefail
+          dst="public/Resources/amadeus-voices"
+          mkdir -p "$dst"
+          files=(
+            hello daga_kotowaru devilish_pervert i_guess nice pervert_confirmed sorry sounds_tough this_guy_hopeless
+            christina gah dont_add_tina why_christina who_the_hell_christina ask_me_whatever could_i_help what_do_you_want
+            what_is_it heheh huh_why_say you_sure nice_to_meet_okabe look_forward_to_working senpai_question senpai_questionmark
+            senpai_what_we_talkin senpai_who_is_this senpai_please_dont_tell still_not_happy dont_call_me_like_that tm_nonsense
+            tm_scientist_no_evidence tm_we_dont_know tm_you_said humans_software memory_complex secret_diary
+            modifying_memories_impossible memories_christina gah_extended should_christina ok tm_not_possible pleased_to_meet_you
+            pervert_idot_wanttodie
+          )
+          base="https://raw.githubusercontent.com/rafiqxin/Amadeus/master/app/src/main/res/raw"
+          for f in "${files[@]}"; do
+            curl -L --fail --retry 3 "$base/$f.ogg" -o "$dst/$f.ogg"
+            test -s "$dst/$f.ogg"
+          done
+          test "$(find "$dst" -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
+
+      - name: Build renderer
+        run: npm run build:render
+
+      - name: Create Capacitor Android shell
+        run: |
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "com.rafiqxin.amadeus",
+            "appName": "AMA-DEUS",
+            "webDir": "dist",
+            "bundledWebRuntime": false
+          }
+          JSON
+          npx cap add android
+          npx cap sync android
+
+      - name: Ensure microphone permission
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/AndroidManifest.xml')
+          s = p.read_text()
+          perm = '<uses-permission android:name="android.permission.RECORD_AUDIO" />'
+          if perm not in s:
+              s = s.replace('<application', perm + '\n    <application', 1)
+          p.write_text(s)
+          PY
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Package APK
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-debug.apk
+          sha256sum AMA-DEUS-Android-v0.1.0-debug.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AMA-DEUS-Android-v0.1.0-debug-APK
+          path: AMA-DEUS-Android-v0.1.0-debug.apk
+          if-no-files-found: error
+          retention-days: 30
