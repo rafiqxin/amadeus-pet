@@ -11,9 +11,9 @@ export function mountAmadeusUi(root, hooks = {}) {
     <div class="ama-subtitle" data-ama-subtitle></div>
     <nav class="ama-dock" aria-label="AMA-DEUS controls"><button data-act="chat" aria-label="文字通信">⌨</button><button data-act="voice" aria-label="语音通信">●</button><button data-act="settings" aria-label="连接设置">⚙</button></nav>
     <div class="ama-backdrop" data-act="close"></div>
-    <section class="ama-sheet" data-sheet="chat" aria-hidden="true"><div class="ama-grab"></div><div class="ama-sheet-head"><div><small>TEXT LINK</small><strong>文字通信</strong></div><button data-act="close">×</button></div><form data-chat-form><textarea rows="3" maxlength="1000" placeholder="和红莉栖说点什么…"></textarea><button class="primary" type="submit">发送</button></form></section>
-    <section class="ama-sheet" data-sheet="voice" aria-hidden="true"><div class="ama-grab"></div><div class="ama-sheet-head"><div><small>VOICE LINK</small><strong>语音通信</strong></div><button data-act="close">×</button></div><div class="ama-orb">●</div><div class="ama-voice-state" data-voice-state>${onRecognize ? '点击开始收音，识别后自动发送。' : '当前平台未接入原生语音识别。'}</div><div class="ama-transcript" data-transcript></div>${onRecognize ? '<button class="primary" data-act="recognize" type="button">开始收音</button>' : ''}</section>
-    <section class="ama-sheet ama-settings" data-sheet="settings" aria-hidden="true"><div class="ama-grab"></div><div class="ama-sheet-head"><div><small>CONNECTION</small><strong>模型与语音</strong></div><button data-act="close">×</button></div><div class="ama-section-title">LLM · OpenAI Compatible</div><label><span>Endpoint</span><input data-llm-endpoint inputmode="url" placeholder="https://api.deepseek.com" /></label><label><span>Model</span><input data-llm-model placeholder="deepseek-chat" /></label><label><span>API Key</span><input data-llm-key type="password" autocomplete="off" placeholder="留空则保留已保存 Key" /></label><div class="ama-section-title">KURISU TTS · Linux GPU</div><label><span>TTS Endpoint</span><input data-tts-endpoint inputmode="url" placeholder="http://192.168.1.100:9881" /></label><label class="ama-toggle"><input data-tts-enabled type="checkbox" checked /><span>无匹配 OGG 时使用 Kurisu TTS</span></label><div class="ama-settings-status" data-settings-status>未检测</div><div class="ama-actions"><button data-act="clear-settings" type="button">清除</button><button data-act="save-settings" type="button">保存</button><button class="primary" data-act="test-settings" type="button">保存并测试</button></div><p>语音优先级：高置信度原版 OGG → Kurisu TTS → 纯文字。不会回退到系统女声。</p></section>
+    <section class="ama-sheet" data-sheet="chat" aria-hidden="true"><div class="ama-grab"></div><div class="ama-sheet-head"><div><small>TEXT LINK</small><strong>文字通信</strong></div><button data-act="close">×</button></div><form data-chat-form><textarea rows="3" maxlength="1000" placeholder="用中文和红莉栖说点什么…"></textarea><button class="primary" type="submit">发送</button></form></section>
+    <section class="ama-sheet" data-sheet="voice" aria-hidden="true"><div class="ama-grab"></div><div class="ama-sheet-head"><div><small>VOICE LINK · ZH INPUT</small><strong>中文语音通信</strong></div><button data-act="close">×</button></div><div class="ama-orb">●</div><div class="ama-voice-state" data-voice-state>${onRecognize ? '点击开始收音。按中文识别，识别完成后自动发送。' : '当前平台未接入原生中文语音识别。'}</div><div class="ama-transcript" data-transcript></div>${onRecognize ? '<button class="primary" data-act="recognize" type="button">开始中文收音</button>' : ''}</section>
+    <section class="ama-sheet ama-settings" data-sheet="settings" aria-hidden="true"><div class="ama-grab"></div><div class="ama-sheet-head"><div><small>CONNECTION</small><strong>模型与语音</strong></div><button data-act="close">×</button></div><div class="ama-section-title">LLM · OpenAI Compatible</div><label><span>Endpoint</span><input data-llm-endpoint inputmode="url" placeholder="https://api.deepseek.com" /></label><label><span>Model</span><input data-llm-model placeholder="deepseek-chat" /></label><label><span>API Key</span><input data-llm-key type="password" autocomplete="off" placeholder="留空则保留已保存 Key" /></label><div class="ama-section-title">KURISU TTS · JAPANESE OUTPUT</div><label><span>TTS Endpoint</span><input data-tts-endpoint inputmode="url" placeholder="http://192.168.1.100:9881" /></label><label class="ama-toggle"><input data-tts-enabled type="checkbox" checked /><span>无匹配原版 OGG 时生成日语 Kurisu TTS</span></label><div class="ama-language-flow"><b>语音链路</b><span>中文输入 / 中文字幕 → 日语发声</span></div><div class="ama-settings-status" data-settings-status>未检测</div><div class="ama-actions"><button data-act="clear-settings" type="button">清除</button><button data-act="save-settings" type="button">保存</button><button class="primary" data-act="test-settings" type="button">保存并测试</button></div><p>优先级：高置信度原版日语 OGG → 中文回复翻译为日语 → Kurisu TTS → 纯文字。不会回退到 Android/Web Speech 系统女声。</p></section>
   `
   root.appendChild(el)
 
@@ -35,7 +35,7 @@ export function mountAmadeusUi(root, hooks = {}) {
     el.querySelector('[data-llm-endpoint]').value = llm.endpoint || ''; el.querySelector('[data-llm-model]').value = llm.model || ''; el.querySelector('[data-llm-key]').value = ''
     el.querySelector('[data-llm-key]').placeholder = llm.hasApiKey ? 'Key 已保存；留空保持不变' : '输入 API Key'
     el.querySelector('[data-tts-endpoint]').value = tts.endpoint || ''; el.querySelector('[data-tts-enabled]').checked = tts.enabled !== false
-    settingsStatus.textContent = `${usingRemoteApi() ? 'LLM 已配置' : 'LLM: 本地模式'} · ${tts.endpoint ? 'TTS 已配置' : 'TTS 未配置'}`
+    settingsStatus.textContent = `${usingRemoteApi() ? 'LLM 已配置' : 'LLM: 本地模式'} · ${tts.endpoint ? 'TTS 已配置 / 日语输出' : 'TTS 未配置'}`
   }
   async function saveSettings(test = false) {
     const next = { endpoint: el.querySelector('[data-llm-endpoint]').value, model: el.querySelector('[data-llm-model]').value }
@@ -43,7 +43,8 @@ export function mountAmadeusUi(root, hooks = {}) {
     setRemoteConfig(next); setTtsConfig({ endpoint: el.querySelector('[data-tts-endpoint]').value, enabled: el.querySelector('[data-tts-enabled]').checked }); loadSettings()
     if (!test) { settingsStatus.textContent = '配置已保存'; return }
     settingsStatus.textContent = '正在测试 LLM / TTS…'; const [llmOk, tts] = await Promise.all([checkServer(), checkTtsServer()])
-    settingsStatus.textContent = `LLM: ${llmOk ? 'OK' : 'FAIL'} · TTS: ${tts.ok ? 'OK' : (tts.reason === 'not-configured' ? '未配置' : 'FAIL')}`
+    const lang = tts?.body?.output_language ? `/${String(tts.body.output_language).toUpperCase()}` : ''
+    settingsStatus.textContent = `LLM: ${llmOk ? 'OK' : 'FAIL'} · TTS: ${tts.ok ? `OK${lang}` : (tts.reason === 'not-configured' ? '未配置' : 'FAIL')}`
   }
 
   loadSettings()
@@ -57,9 +58,9 @@ export function mountAmadeusUi(root, hooks = {}) {
     else if (act === 'test-settings') await saveSettings(true)
     else if (act === 'clear-settings') { clearRemoteConfig(); clearTtsConfig(); loadSettings(); settingsStatus.textContent = '配置已清除' }
     else if (act === 'recognize' && onRecognize) {
-      voiceState.textContent = '正在收音…'; transcript.textContent = ''; btn.disabled = true
+      voiceState.textContent = '正在收音（中文）…'; transcript.textContent = ''; btn.disabled = true
       try { const text = await onRecognize(); transcript.textContent = `识别：${text}`; voiceState.textContent = '识别完成，正在发送…'; closeSheet(); onSend(text) }
-      catch (error) { voiceState.textContent = error?.message || '语音识别失败' }
+      catch (error) { voiceState.textContent = error?.message || '中文语音识别失败' }
       finally { btn.disabled = false }
     }
   })
