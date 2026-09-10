@@ -1,10 +1,12 @@
 /* Settings persistence (localStorage) + application to the stage. */
 
 const DEFAULTS = {
-  scale: 0.92,       // pet render scale (applied to stage transform)
-  idleChat: true,    // occasional idle chatter bubbles
+  scale: 0.92,
+  idleChat: true,
   opacity: 1.0,
-  voice: false,      // TTS stays off until a deliberate voice provider is configured
+  // On iOS this enables only the bundled reference OGG reaction bank.
+  // Arbitrary LLM output still remains silent when no line matches.
+  voice: true,
 }
 
 const KEY = 'amadeus-pet-settings-v1'
@@ -25,17 +27,13 @@ export function createSettings() {
 
   return {
     get(k) { return data[k] },
-    set(k, v) {
-      data[k] = v
-      save()
-    },
+    set(k, v) { data[k] = v; save() },
     all() { return { ...data } },
     onChange(fn) { listeners.add(fn) },
     save,
   }
 }
 
-/* Apply scale/opacity to the pet stage canvas wrapper. */
 export function applyVisualSettings(stage, canvasWrap, settings) {
   function apply() {
     const s = settings.get('scale') || 1
