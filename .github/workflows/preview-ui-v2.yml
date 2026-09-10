@@ -30,32 +30,41 @@ jobs:
         shell: bash
         run: |
           mkdir -p preview
-          set +e
-          timeout 12s xvfb-run -a env AMA_CAPTURE="$PWD/preview/boot.png" AMA_CAPTURE_DELAY=2500 npm run app -- --no-sandbox
-          code=$?
-          set -e
-          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi
+          xvfb-run -a env AMA_CAPTURE="$PWD/preview/boot.png" AMA_CAPTURE_DELAY=2500 ./node_modules/.bin/electron . --no-sandbox >preview/boot.log 2>&1 &
+          pid=$!
+          for i in {1..40}; do
+            [ -s preview/boot.png ] && break
+            sleep 0.5
+          done
           test -s preview/boot.png
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
 
       - name: Capture main
         shell: bash
         run: |
-          set +e
-          timeout 24s xvfb-run -a env AMA_CAPTURE="$PWD/preview/main.png" AMA_CAPTURE_DELAY=18500 npm run app -- --no-sandbox
-          code=$?
-          set -e
-          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi
+          xvfb-run -a env AMA_CAPTURE="$PWD/preview/main.png" AMA_CAPTURE_DELAY=18500 ./node_modules/.bin/electron . --no-sandbox >preview/main.log 2>&1 &
+          pid=$!
+          for i in {1..60}; do
+            [ -s preview/main.png ] && break
+            sleep 0.5
+          done
           test -s preview/main.png
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
 
       - name: Capture call
         shell: bash
         run: |
-          set +e
-          timeout 24s xvfb-run -a env AMA_HASH=call AMA_CAPTURE="$PWD/preview/call.png" AMA_CAPTURE_DELAY=18500 npm run app -- --no-sandbox
-          code=$?
-          set -e
-          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi
+          xvfb-run -a env AMA_HASH=call AMA_CAPTURE="$PWD/preview/call.png" AMA_CAPTURE_DELAY=18500 ./node_modules/.bin/electron . --no-sandbox >preview/call.log 2>&1 &
+          pid=$!
+          for i in {1..60}; do
+            [ -s preview/call.png ] && break
+            sleep 0.5
+          done
           test -s preview/call.png
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         with:
