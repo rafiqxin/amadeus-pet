@@ -2,7 +2,7 @@ import './style.css'
 import { createPetAppCubism2 } from './live2d/cubism2app.js'
 import { mountBoot } from './ui/boot.js'
 import { mountAmadeusUi } from './ui/amadeus.js'
-import { chat, classifyReferenceVoice } from './llm/client.js'
+import { chat, classifyReferenceVoice, translateForKurisuTts } from './llm/client.js'
 import { planReaction, applyReaction } from './pet/reaction.js'
 import { nextTouchReaction } from './pet/touch-reactions.js'
 import { playReferenceVoice } from './voice/player.js'
@@ -11,7 +11,7 @@ import { nativeSpeechAvailablePlatform, recognizeOnce } from './platform/speech.
 
 const MODEL_DIR = './models/kurisu/'
 const MODEL_FILE = 'kurisu.model.json'
-const canvas = document.querySelector('#l2d-canvas2')
+const canvas = document.querySelector('#l2d-canvas')
 const uiRoot = document.querySelector('#ui-root')
 
 let ui = null
@@ -44,16 +44,23 @@ async function sendToKurisu(text) {
   const input = String(text || '').trim()
   if (!input || thinking) return
   thinking = true
-  ui?.setStatus('THINKING')
+  ui?.setStatus('THINKING · ZH')
   try {
+    // Product language contract:
+    // Chinese user/STT -> Chinese visible LLM reply -> Japanese speech.
     const reply = await chat(input)
     const reaction = planReaction(reply)
     applyReaction(pet, reaction)
     ui?.setSubtitle(reply, 12000)
     ui?.setStatus('VOICE ROUTING')
-    const route = await routeAndSpeak(reply, { classify: classifyReferenceVoice, mood: reaction.emotion, onLevel: setMouth })
+    const route = await routeAndSpeak(reply, {
+      classify: classifyReferenceVoice,
+      translateTts: translateForKurisuTts,
+      mood: reaction.emotion,
+      onLevel: setMouth,
+    })
     if (route.kind === 'ogg') ui?.setStatus(`OGG · ${route.id}`)
-    else if (route.kind === 'tts' && route.played) ui?.setStatus('KURISU TTS')
+    else if (route.kind === 'tts' && route.played) ui?.setStatus('KURISU TTS · JA')
     else if (route.kind === 'text') ui?.setStatus('TEXT ONLY')
     setTimeout(() => ui?.setStatus('READY'), 1800)
   } catch (error) {
@@ -71,6 +78,7 @@ async function connect() {
   document.body.classList.add('connected')
   ui = mountAmadeusUi(uiRoot, {
     onSend: sendToKurisu,
+    // User speech recognition remains Chinese even though TTS output is Japanese.
     onRecognize: nativeSpeechAvailablePlatform() ? () => recognizeOnce({ language: 'zh-CN' }) : null,
   })
   ui.setStatus('READY')
