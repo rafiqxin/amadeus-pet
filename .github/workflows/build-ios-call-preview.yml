@@ -7,7 +7,6 @@ on:
     paths:
       - '.github/workflows/build-ios-call-preview.yml'
       - 'src/**'
-      - 'scripts/ios-native-speech.swift'
       - 'index.html'
       - 'package.json'
       - 'vite.config.js'
@@ -28,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
-          npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7
+          npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7 @capacitor-community/speech-recognition@7.0.1
 
       - name: Force CALL preview route
         run: |
@@ -89,31 +88,6 @@ jobs:
           npx cap add ios
           npx cap sync ios
 
-      - name: Install native iOS speech bridge
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          app = Path('ios/App/App/AppDelegate.swift')
-          src = app.read_text()
-          if 'import Speech' not in src:
-              src = src.replace('import Capacitor', 'import Capacitor\nimport Speech\nimport AVFoundation')
-          plugin = Path('scripts/ios-native-speech.swift').read_text()
-          if 'class NativeSpeechPlugin' not in src:
-              src += '\n\n' + plugin
-          app.write_text(src)
-
-          storyboard = Path('ios/App/App/Base.lproj/Main.storyboard')
-          s = storyboard.read_text()
-          old = 'customClass="CAPBridgeViewController" customModule="Capacitor"'
-          new = 'customClass="MainViewController" customModule="App"'
-          if old not in s and 'customClass="MainViewController"' not in s:
-              raise SystemExit('Could not locate Capacitor bridge view controller in Main.storyboard')
-          storyboard.write_text(s.replace(old, new))
-          PY
-          grep -q 'class NativeSpeechPlugin' ios/App/App/AppDelegate.swift
-          grep -q 'customClass="MainViewController"' ios/App/App/Base.lproj/Main.storyboard
-
       - name: Use original Amadeus launcher icon
         run: |
           ICON_SRC="$RUNNER_TEMP/amadeus-launcher.png"
@@ -155,12 +129,12 @@ jobs:
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
           cd build
-          zip -qry AMA-DEUS-Mobile-Native-STT-Reference-Voice-Preview-unsigned.ipa Payload
-          shasum -a 256 AMA-DEUS-Mobile-Native-STT-Reference-Voice-Preview-unsigned.ipa
+          zip -qry AMA-DEUS-Mobile-Reference-Voice-Preview-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-Mobile-Reference-Voice-Preview-unsigned.ipa
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Mobile-Native-STT-Reference-Voice-Preview-unsigned-IPA
-          path: build/AMA-DEUS-Mobile-Native-STT-Reference-Voice-Preview-unsigned.ipa
+          name: AMA-DEUS-Mobile-Reference-Voice-Preview-unsigned-IPA
+          path: build/AMA-DEUS-Mobile-Reference-Voice-Preview-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
