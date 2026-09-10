@@ -106,27 +106,33 @@ jobs:
           done
           test "$(find "$dst" -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
 
-      - name: Verify curated touch voice cohort
+      - name: Verify full 45-voice touch shuffle
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs'
-          import { TOUCH_REACTION_VOICE_IDS } from './src/pet/touch-reactions.js'
-          const audited48kMono = new Set([
-            'ask_me_whatever','christina','could_i_help','gah','gah_extended','heheh','huh_why_say',
-            'humans_software','look_forward_to_working','memories_christina','memory_complex',
-            'modifying_memories_impossible','nice_to_meet_okabe','ok','secret_diary',
-            'senpai_please_dont_tell','senpai_question','senpai_questionmark','senpai_what_we_talkin',
-            'senpai_who_is_this','should_christina','still_not_happy','tm_nonsense','tm_not_possible',
-            'tm_scientist_no_evidence','tm_we_dont_know','tm_you_said','what_do_you_want','what_is_it',
-            'why_christina','you_sure'
-          ])
-          if (TOUCH_REACTION_VOICE_IDS.length < 10) throw new Error('touch reaction bank unexpectedly small')
+          import { TOUCH_REACTION_VOICE_IDS, nextTouchReaction, resetTouchReactions } from './src/pet/touch-reactions.js'
+
+          if (TOUCH_REACTION_VOICE_IDS.length !== 45) {
+            throw new Error(`expected 45 touch voices, got ${TOUCH_REACTION_VOICE_IDS.length}`)
+          }
+          if (new Set(TOUCH_REACTION_VOICE_IDS).size !== 45) {
+            throw new Error('touch voice bank contains duplicate IDs')
+          }
           for (const id of TOUCH_REACTION_VOICE_IDS) {
-            if (!audited48kMono.has(id)) throw new Error(`touch reaction leaves curated 48k-mono cohort: ${id}`)
             const file = `public/Resources/amadeus-voices/${id}.ogg`
             if (!fs.existsSync(file) || fs.statSync(file).size === 0) throw new Error(`missing touch OGG: ${id}`)
           }
-          console.log(`Verified ${TOUCH_REACTION_VOICE_IDS.length} touch reactions stay inside the audited 48 kHz mono cohort.`)
+
+          resetTouchReactions()
+          const sequence = Array.from({ length: 90 }, () => nextTouchReaction('body').voice)
+          for (let round = 0; round < 2; round += 1) {
+            const slice = sequence.slice(round * 45, (round + 1) * 45)
+            if (new Set(slice).size !== 45) throw new Error(`shuffle round ${round + 1} repeated before exhausting all 45 voices`)
+          }
+          for (let i = 1; i < sequence.length; i += 1) {
+            if (sequence[i] === sequence[i - 1]) throw new Error(`adjacent repeat at index ${i}: ${sequence[i]}`)
+          }
+          console.log('Verified two complete 45-voice shuffle rounds with no early or adjacent repeats.')
           NODE
 
       - name: Build renderer
@@ -157,7 +163,7 @@ jobs:
           grep -R -q '__amaLastTouch' dist/assets
           test "$(find dist/Resources/amadeus-voices -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
           test ! -d dist/models/kurisu/sounds
-          echo "Touch -> one mobile owner -> explicit OGG only; legacy motion MP3 absent."
+          echo "Touch -> one mobile owner -> full 45 OGG shuffle; legacy motion MP3 absent."
 
       - name: Create Capacitor Android shell
         run: |
@@ -210,28 +216,28 @@ jobs:
 
       - name: Package APK
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk
-          sha256sum AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk.sha256
+          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk
+          sha256sum AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Android-v0.1.0-alpha.6-debug-APK
+          name: AMA-DEUS-Android-v0.1.0-alpha.7-debug-APK
           path: |
-            AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk
-            AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk.sha256
+            AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk
+            AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish Android prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.6]')
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.7]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "android-v0.1.0-alpha.6" \
-            "AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk#AMA-DEUS Android v0.1.0 alpha 6 APK" \
-            "AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk.sha256#SHA-256 checksum" \
+          gh release create "android-v0.1.0-alpha.7" \
+            "AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk#AMA-DEUS Android v0.1.0 alpha 7 APK" \
+            "AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk.sha256#SHA-256 checksum" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS Android v0.1.0 alpha 6 · Remove Legacy Motion Voice" \
-            --notes "Root-cause voice fix. The Cubism2 Kurisu model inherited motion-bound MP3 files in kurisu.model.json. pixi-live2d-display automatically plays a motion's configured sound, while AMA-DEUS also played its explicit Amadeus OGG, causing two different voices from one tap. Alpha 6 removes every motion sound reference and purges models/kurisu/sounds from the Android bundle. CI verifies the source model, built renderer and final Capacitor assets contain no legacy motion-bound Kurisu audio. Explicit Amadeus OGG is now the only character voice path on touch." \
+            --title "AMA-DEUS Android v0.1.0 alpha 7 · Full 45-Voice Shuffle" \
+            --notes "Alpha 7 fixes the misleadingly small direct-touch voice pool. All 45 bundled Amadeus reference OGG clips now participate in a shuffle-bag: every clip is used once per 45-touch round before any clip can repeat, and adjacent repeats are prevented across round boundaries. Touch location now controls only Kurisu's visual motion/expression rather than restricting audio to a 3-5 line regional pool. The alpha 6 fix remains intact: legacy Cubism motion MP3 audio is still removed from the source definition and final Android bundle, leaving explicit Amadeus OGG as the sole character voice source." \
             --prerelease
