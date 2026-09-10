@@ -28,7 +28,9 @@ if (-not (Test-Path (Join-Path $Gsv '.git'))) {
 if ($Install) {
   Push-Location $Gsv
   try {
-    pwsh -F .\install.ps1 --Device $Device --Source $Source
+    # Use the current PowerShell host so Windows PowerShell 5.1 also works.
+    # GPT-SoVITS install.ps1 uses normal PowerShell parameters: -Device / -Source.
+    & .\install.ps1 -Device $Device -Source $Source
     if ($LASTEXITCODE -ne 0) { throw 'GPT-SoVITS install.ps1 failed' }
   } finally { Pop-Location }
 }
