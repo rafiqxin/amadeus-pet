@@ -35,7 +35,12 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
-          npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor-community/speech-recognition@7.0.1
+          # Capacitor discovers native plugins from the app dependency graph.
+          # Do not use --no-save here: the generated Android shell must see
+          # SpeechRecognition as a real application dependency.
+          npm install --save-exact @capacitor/core@7 @capacitor/android@7 @capacitor-community/speech-recognition@7.0.1
+          npm install --save-dev --save-exact @capacitor/cli@7
+          npm ls @capacitor/core @capacitor/android @capacitor-community/speech-recognition
 
       - name: Adapt renderer for Android mobile
         run: |
@@ -119,6 +124,17 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Verify native SpeechRecognition registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLUGINS="android/app/src/main/assets/capacitor.plugins.json"
+          test -f "$PLUGINS"
+          cat "$PLUGINS"
+          grep -q 'SpeechRecognition' "$PLUGINS"
+          grep -R -q 'capacitor-community-speech-recognition' android/capacitor.settings.gradle android/app/capacitor.build.gradle
+          echo "SpeechRecognition native Android plugin is registered."
+
       - name: Configure Android permissions
         run: |
           python3 - <<'PY'
@@ -141,28 +157,28 @@ jobs:
 
       - name: Package APK
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk
-          sha256sum AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk.sha256
+          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk
+          sha256sum AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Android-v0.1.0-alpha.1-debug-APK
+          name: AMA-DEUS-Android-v0.1.0-alpha.2-debug-APK
           path: |
-            AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk
-            AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk.sha256
+            AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk
+            AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish Android prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.1]')
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.2]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "android-v0.1.0-alpha.1" \
-            "AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk#AMA-DEUS Android v0.1.0 alpha 1 APK" \
-            "AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk.sha256#SHA-256 checksum" \
+          gh release create "android-v0.1.0-alpha.2" \
+            "AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk#AMA-DEUS Android v0.1.0 alpha 2 APK" \
+            "AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk.sha256#SHA-256 checksum" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS Android v0.1.0 alpha 1" \
-            --notes "Android/LineageOS preview build from the chatgpt/android-mobile branch. Built with Vite + Capacitor 7 and JDK 21. Includes the mobile CALL route, Android layout adaptation, speech-recognition integration, and 45 bundled Amadeus reference voice clips. This is a debug-signed prerelease for sideload testing." \
+            --title "AMA-DEUS Android v0.1.0 alpha 2" \
+            --notes "Android/LineageOS speech hotfix. The Capacitor SpeechRecognition package is now installed as a real application dependency before native project generation, and CI hard-fails unless SpeechRecognition is present in capacitor.plugins.json and the Android Gradle plugin graph. Includes the existing mobile CALL UI and 45 bundled Amadeus reference voice clips. Debug-signed prerelease for sideload testing." \
             --prerelease
