@@ -1,4 +1,5 @@
 import './mobile.css'
+import { SpeechRecognition } from '@capacitor-community/speech-recognition'
 import {
   checkServer,
   getRemoteConfig,
@@ -6,18 +7,6 @@ import {
   clearRemoteConfig,
   usingRemoteApi,
 } from '../pet/llm.js'
-
-/*
- * Mobile speech is intentionally accessed through Capacitor's runtime global
- * instead of importing a community plugin. The iOS shell registers our own
- * NativeSpeech CAPPlugin, backed by SFSpeechRecognizer + AVAudioEngine.
- *
- * Keeping this tiny adapter here means Android can later provide the same
- * NativeSpeech JS contract without changing the UI or dialogue pipeline.
- */
-function speechBridge() {
-  return window.Capacitor?.Plugins?.NativeSpeech || null
-}
 
 export function mountMobileUi(root, hooks = {}) {
   const {
@@ -167,20 +156,15 @@ export function mountMobileUi(root, hooks = {}) {
   }
 
   async function ensureSpeechPermission() {
-    const speech = speechBridge()
-    if (!speech) throw new Error('NativeSpeech 原生模块未加载，请安装最新 IPA')
-
-    const available = await speech.available()
+    const available = await SpeechRecognition.available()
     if (!available?.available) throw new Error('当前设备不支持系统语音识别')
-
-    let permission = await speech.checkPermissions()
-    if (permission.speechRecognition !== 'granted' || permission.microphone !== 'granted') {
-      permission = await speech.requestPermissions()
+    let permission = await SpeechRecognition.checkPermissions()
+    if (permission.speechRecognition !== 'granted') {
+      permission = await SpeechRecognition.requestPermissions()
     }
-    if (permission.speechRecognition !== 'granted' || permission.microphone !== 'granted') {
+    if (permission.speechRecognition !== 'granted') {
       throw new Error('需要麦克风与语音识别权限')
     }
-    return speech
   }
 
   function setListening(on) {
@@ -193,9 +177,8 @@ export function mountMobileUi(root, hooks = {}) {
   }
 
   async function startVoice() {
-    const existing = speechBridge()
     if (listening) {
-      try { await existing?.stop() } catch {}
+      try { await SpeechRecognition.stop() } catch {}
       setListening(false)
       voiceStatusEl.textContent = '已停止'
       return
@@ -205,14 +188,15 @@ export function mountMobileUi(root, hooks = {}) {
     voiceStatusEl.textContent = '正在请求语音权限…'
 
     try {
-      const speech = await ensureSpeechPermission()
+      await ensureSpeechPermission()
       setListening(true)
       voiceStatusEl.textContent = '正在收音，请说话…'
 
-      const result = await speech.start({
+      const result = await SpeechRecognition.start({
         language: 'zh-CN',
         maxResults: 1,
         partialResults: false,
+        popup: false,
       })
 
       setListening(false)
