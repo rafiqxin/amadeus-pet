@@ -12,6 +12,9 @@ on:
       - 'vite.config.js'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     runs-on: ubuntu-24.04
@@ -138,12 +141,28 @@ jobs:
 
       - name: Package APK
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-debug.apk
-          sha256sum AMA-DEUS-Android-v0.1.0-debug.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk
+          sha256sum AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Android-v0.1.0-debug-APK
-          path: AMA-DEUS-Android-v0.1.0-debug.apk
+          name: AMA-DEUS-Android-v0.1.0-alpha.1-debug-APK
+          path: |
+            AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk
+            AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk.sha256
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish Android prerelease
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.1]')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "android-v0.1.0-alpha.1" \
+            "AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk#AMA-DEUS Android v0.1.0 alpha 1 APK" \
+            "AMA-DEUS-Android-v0.1.0-alpha.1-debug.apk.sha256#SHA-256 checksum" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "AMA-DEUS Android v0.1.0 alpha 1" \
+            --notes "Android/LineageOS preview build from the chatgpt/android-mobile branch. Built with Vite + Capacitor 7 and JDK 21. Includes the mobile CALL route, Android layout adaptation, speech-recognition integration, and 45 bundled Amadeus reference voice clips. This is a debug-signed prerelease for sideload testing." \
+            --prerelease
