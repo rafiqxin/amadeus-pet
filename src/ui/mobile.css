@@ -1,0 +1,259 @@
+.mobile-ui { display: none; }
+
+body.mobile-ios {
+  background: #000;
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
+}
+
+body.mobile-ios .mobile-ui {
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+body.mobile-ios .hud-dock {
+  display: none !important;
+}
+
+body.mobile-ios.console-open.call-mode .call-controls {
+  display: none !important;
+}
+
+body.mobile-ios .mobile-dock {
+  position: absolute;
+  left: 50%;
+  bottom: calc(17vh + env(safe-area-inset-bottom) + 12px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid rgba(225, 151, 23, 0.48);
+  border-radius: 999px;
+  background: rgba(5, 5, 3, 0.68);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45), inset 0 0 18px rgba(224, 151, 17, 0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  pointer-events: auto;
+}
+
+body.mobile-ios .mobile-dock-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid rgba(224, 151, 17, 0.55);
+  background: rgba(19, 14, 6, 0.84);
+  color: #f0a318;
+  font: 600 18px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body.mobile-ios .mobile-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  visibility: hidden;
+  background: rgba(0, 0, 0, 0.35);
+  transition: opacity .2s ease;
+  pointer-events: auto;
+}
+
+body.mobile-ios .mobile-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: min(56vh, 520px);
+  padding: 8px 18px calc(18px + env(safe-area-inset-bottom));
+  border-top: 1px solid rgba(224, 151, 17, 0.55);
+  border-radius: 22px 22px 0 0;
+  background:
+    linear-gradient(180deg, rgba(25, 18, 8, 0.96), rgba(6, 6, 5, 0.985));
+  box-shadow: 0 -20px 60px rgba(0, 0, 0, 0.5);
+  transform: translateY(105%);
+  transition: transform .24s cubic-bezier(.2,.75,.25,1);
+  pointer-events: auto;
+}
+
+body.mobile-ios .mobile-sheet.open {
+  transform: translateY(0);
+}
+
+body.mobile-ios .mobile-ui.sheet-open .mobile-sheet-backdrop {
+  opacity: 1;
+  visibility: visible;
+}
+
+.mobile-sheet-grab {
+  width: 42px;
+  height: 4px;
+  margin: 2px auto 12px;
+  border-radius: 4px;
+  background: rgba(255,255,255,.22);
+}
+
+.mobile-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.mobile-sheet-kicker {
+  color: #a7741d;
+  font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 2px;
+}
+
+.mobile-sheet-title {
+  margin-top: 4px;
+  color: #f7e9cc;
+  font: 600 19px/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.mobile-close {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(224,151,17,.35);
+  border-radius: 50%;
+  background: rgba(255,255,255,.04);
+  color: #d9c49a;
+  font-size: 23px;
+}
+
+.mobile-chat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mobile-chat-input,
+.mobile-field input {
+  width: 100%;
+  border: 1px solid rgba(224,151,17,.35);
+  border-radius: 12px;
+  outline: none;
+  background: rgba(0,0,0,.42);
+  color: #fff4df;
+  font: 16px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.mobile-chat-input {
+  resize: none;
+  padding: 12px 13px;
+}
+
+.mobile-field {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.mobile-field span {
+  display: block;
+  margin: 0 0 6px 2px;
+  color: #bca982;
+  font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.mobile-field input {
+  height: 44px;
+  padding: 0 12px;
+}
+
+.mobile-primary,
+.mobile-secondary {
+  min-height: 44px;
+  border-radius: 12px;
+  font: 600 15px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.mobile-primary {
+  border: 1px solid #d98f17;
+  background: linear-gradient(180deg, #b5680e, #6f3b08);
+  color: #fff6e6;
+}
+
+.mobile-secondary {
+  border: 1px solid rgba(255,255,255,.18);
+  background: rgba(255,255,255,.05);
+  color: #d8d0c2;
+}
+
+.mobile-api-actions {
+  display: grid;
+  grid-template-columns: .7fr 1.3fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.mobile-api-status {
+  min-height: 18px;
+  margin: 4px 0 10px;
+  color: #e0a32c;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.mobile-api-note,
+.mobile-voice-copy {
+  margin-top: 12px;
+  color: #918573;
+  font: 12px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.mobile-voice-sheet {
+  text-align: center;
+}
+
+.mobile-voice-orb {
+  width: 84px;
+  height: 84px;
+  margin: 8px auto 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(224,151,17,.55);
+  color: #f0a318;
+  font-size: 28px;
+  box-shadow: 0 0 34px rgba(224,151,17,.12);
+}
+
+.mobile-voice-disabled {
+  width: 100%;
+  margin-top: 16px;
+  opacity: .45;
+}
+
+/* iPhone/iPad viewport: let the Live2D renderer fit the actual CSS viewport.
+   The desktop 480x853 transform is deliberately not reused here. */
+body.mobile-ios.console-open.call-mode #l2d-canvas,
+body.mobile-ios.console-open.call-mode #l2d-canvas2 {
+  transform: none !important;
+  transform-origin: 50% 50% !important;
+}
+
+body.mobile-ios.console-open.call-mode .call-subtitle {
+  height: 17vh;
+  min-height: 17vh;
+  max-height: 17vh;
+  padding: 18px 24px calc(10px + env(safe-area-inset-bottom));
+  font-size: clamp(15px, 4vw, 18px);
+}
+
+body.mobile-ios.console-open.call-mode .hud-call::after {
+  right: 10px;
+  bottom: calc(2.5vh + env(safe-area-inset-bottom));
+  width: 24vw;
+  height: 8vh;
+}
+
+@media (orientation: landscape) {
+  body.mobile-ios .mobile-dock {
+    left: auto;
+    right: calc(12px + env(safe-area-inset-right));
+    bottom: 18px;
+    transform: none;
+    flex-direction: column;
+  }
+}
