@@ -1,7 +1,12 @@
 /*
- * Original Android Amadeus UI artwork layered around the existing Live2D
- * renderer. No model/runtime selectors are changed here.
+ * CALL/reference presentation calibrated against:
+ *   rafiqxin/Amadeus/Screenshots/Kurisuscreen.png
+ *   rafiqxin/Amadeus/Screenshots/Subscreen.png
+ *
+ * The original Live2D model/runtime is preserved. Only presentation geometry
+ * changes while the CALL page is active.
  */
+
 #stage::before {
   content: '';
   position: absolute;
@@ -9,9 +14,22 @@
   background: url('/Resources/amadeus-reference/bg1.png') center / cover no-repeat;
   opacity: 0;
   pointer-events: none;
+  z-index: 0;
 }
 body.console-open.call-mode #stage::before { opacity: 1; }
 
+/* Reference character framing:
+ * - hair begins almost immediately below the status strip
+ * - shoulders leave ~4% horizontal breathing room
+ * A visual transform keeps the Live2D runtime/model itself untouched.
+ */
+body.console-open.call-mode #l2d-canvas,
+body.console-open.call-mode #l2d-canvas2 {
+  transform: translateY(-74px) scale(1.085);
+  transform-origin: 50% 50%;
+}
+
+/* Full-screen Android app surface; remove the desktop terminal frame. */
 body.console-open.call-mode .hud-frame {
   margin: 0;
   border: 0;
@@ -20,68 +38,137 @@ body.console-open.call-mode .hud-frame {
   background: transparent;
 }
 body.console-open.call-mode .hud-header,
-body.console-open.call-mode .hud-footer { display: none; }
-
+body.console-open.call-mode .hud-footer {
+  display: none;
+}
 body.console-open.call-mode .hud-call {
   position: relative;
+  flex: 1;
   padding: 0;
   overflow: hidden;
   background: transparent;
 }
+
+/* Re-create only the visual system-status strip that is present in both
+ * Kurisuscreen/Subscreen reference captures. Existing live clock data is used.
+ */
+body.console-open.call-mode .phone-bar {
+  display: flex;
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 34px;
+  padding: 0 12px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  background: rgba(0, 0, 0, 0.92);
+  color: #fff;
+  font-family: 'Noto Sans Mono CJK SC', 'Noto Sans CJK SC', 'Noto Sans SC', monospace;
+  font-size: 13px;
+  letter-spacing: 0;
+  pointer-events: none;
+}
+body.console-open.call-mode .phone-bar::before {
+  content: 'XP   </>   USB   ●';
+  margin-right: auto;
+  color: #f0a318;
+  font-size: 12px;
+  white-space: nowrap;
+}
+body.console-open.call-mode .phone-signal {
+  order: 2;
+  color: #fff;
+  font-size: 12px;
+}
+body.console-open.call-mode .phone-batt {
+  order: 3;
+  color: #fff;
+  font-size: 12px;
+}
+body.console-open.call-mode .phone-time {
+  order: 4;
+  color: #fff;
+  font-size: 14px;
+}
+body.console-open.call-mode .call-state-mini {
+  display: none;
+}
+
+/* activity_main.xml: alignParentRight + marginEnd=10dp + marginBottom=26dp.
+ * Reference screenshots show the rendered logo at ~22% of screen width.
+ */
 body.console-open.call-mode .hud-call::after {
   content: '';
   position: absolute;
   right: 10px;
   bottom: 26px;
-  width: 132px;
-  height: 76px;
+  width: 106px;
+  height: 62px;
   background: url('/Resources/amadeus-reference/amadeus_icon_smaller.png') right bottom / contain no-repeat;
   pointer-events: none;
   z-index: 2;
 }
-body.console-open.call-mode .phone-bar { display: none; }
 
+/* Keep the existing call actions functional without letting them contaminate
+ * the 1:1 reference composition. They reveal only when the pointer reaches
+ * their original interaction zone; ringing accept/decline remains visible.
+ */
 body.console-open.call-mode .call-controls {
   position: absolute;
-  top: 18px;
-  right: 14px;
+  top: 42px;
+  right: 10px;
+  z-index: 7;
   margin: 0;
-  z-index: 5;
-  opacity: 0.18;
-  transition: opacity 0.15s;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 0.12s;
 }
-body.console-open.call-mode .call-controls:hover { opacity: 0.95; }
-
+body.console-open.call-mode .call-controls:hover {
+  opacity: 0.9;
+}
 body.console-open.call-mode .call-accept-row {
   position: absolute;
   left: 50%;
-  bottom: 132px;
+  bottom: 160px;
+  z-index: 7;
   margin: 0;
   transform: translateX(-50%);
-  z-index: 5;
 }
 
+/* Subscreen calibration:
+ * the source frame occupies roughly the bottom 16.8% of the visible app.
+ * activity_main.xml puts text 11dp below the frame top with 35dp side inset.
+ */
 body.console-open.call-mode .call-subtitle {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 3;
-  min-height: 100px;
-  max-height: 132px;
+  height: 144px;
+  min-height: 144px;
+  max-height: 144px;
   margin: 0;
-  padding: 17px 35px 12px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
+  padding: 18px 35px 12px;
+  display: block;
   overflow: hidden;
   background: url('/Resources/amadeus-reference/subtitle_frame_big.png') center bottom / 100% 100% no-repeat;
   border: 0;
   color: #fff;
-  font-family: 'Courier New', 'Noto Sans Mono CJK SC', monospace;
+  font-family: 'Noto Sans Mono CJK SC', 'Noto Sans CJK SC', 'Noto Sans SC', 'DejaVu Sans', monospace;
   font-size: 16px;
+  font-weight: 400;
   line-height: 1.45;
   letter-spacing: 0;
   text-align: left;
   text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+}
+body.console-open.call-mode .call-subtitle:empty {
+  visibility: hidden;
 }
