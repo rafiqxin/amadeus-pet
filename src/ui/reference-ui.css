@@ -25,8 +25,8 @@ body.console-open.call-mode #stage::before { opacity: 1; }
  */
 body.console-open.call-mode #l2d-canvas,
 body.console-open.call-mode #l2d-canvas2 {
-  transform: translateY(-128px) scale(1.085);
-  transform-origin: 50% 50%;
+  transform: translateY(-128px) scale(1.085) !important;
+  transform-origin: 50% 50% !important;
 }
 
 /* Full-screen Android app surface; remove the desktop terminal frame. */
