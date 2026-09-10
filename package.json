@@ -9,7 +9,8 @@
     "watch:render": "vite build --watch",
     "app": "electron .",
     "start": "npm run build:render && electron .",
-    "pack": "npm run build:render && electron-builder --dir"
+    "pack": "npm run build:render && electron-builder --dir",
+    "sync:reference-ui": "node scripts/sync-amadeus-ui.mjs"
   },
   "build": {
     "appId": "com.fan.amadeus-pet",
