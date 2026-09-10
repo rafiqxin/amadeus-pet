@@ -72,9 +72,35 @@ s = replace_required(
     "if (isMobile) {\n    let resizeTimer",
     'mobile resize hook',
 )
+# Desktop opens the HUD console and intentionally disables stage dragging/taps.
+# Mobile CALL mode also uses the console-open class for presentation, so the
+# desktop guard must not disable character touch there.
+s = replace_required(
+    s,
+    "interactions.setConsoleOpen(open)",
+    "interactions.setConsoleOpen(open && !isMobile)",
+    'mobile stage interaction gate',
+)
 
 helper_needle = "  let modelTapHandled = false\n"
-helper = """  function runTouchReaction(hit) {
+helper = """  let lastTouchReactionAt = 0
+
+  function mobileAreaFromPoint(e) {
+    if (!e) return 'body'
+    const r = stage.getBoundingClientRect()
+    const y = Math.max(0, Math.min(1, (e.clientY - r.top) / Math.max(1, r.height)))
+    if (y < 0.42) return 'head'
+    if (y < 0.63) return 'mouth'
+    return 'body'
+  }
+
+  function runTouchReaction(hit) {
+    // Cubism hitTest and the stage fallback can both observe one physical tap.
+    // Keep only the first reaction so one tap never plays two OGG clips.
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    if (now - lastTouchReactionAt < 160) return
+    lastTouchReactionAt = now
+
     const touch = nextTouchReaction(hit?.area || 'body')
     if (!touch) return
     const target = hit?.model || pet
@@ -92,7 +118,7 @@ helper = """  function runTouchReaction(hit) {
       onEnd: () => pet?.setMouthOpen(0),
     }) : { played: false }
     if (!res.played) pet?.setMouthOpen(0)
-    window.__amaLastTouch = { ...touch, voicePlayed: !!res.played }
+    window.__amaLastTouch = { ...touch, voicePlayed: !!res.played, at: Date.now() }
   }
 
   let modelTapHandled = false
@@ -120,9 +146,9 @@ old_fallback = """    onClick() {
       sayLine(dialogue.clickLine())
     },
 """
-new_fallback = """    onClick() {
+new_fallback = """    onClick(e) {
       if (modelTapHandled) { modelTapHandled = false; return }
-      runTouchReaction({ area: 'body', model: pet })
+      runTouchReaction({ area: isMobile ? mobileAreaFromPoint(e) : 'body', model: pet })
     },
 """
 s = replace_required(s, old_fallback, new_fallback, 'stage click handler')
@@ -132,7 +158,23 @@ mobile_css = Path('src/ui/mobile.css')
 css = mobile_css.read_text()
 if 'body.mobile-ios' not in css:
     raise SystemExit('mobile-ios CSS selector not found')
-mobile_css.write_text(css.replace('body.mobile-ios', 'body.mobile-native'))
+css = css.replace('body.mobile-ios', 'body.mobile-native')
+css += """
+
+/* Native mobile CALL input must reach the Live2D canvas.  Android WebView may
+   otherwise turn a pointer sequence into a pan/cancel gesture before pointerup. */
+body.mobile-native #stage,
+body.mobile-native #l2d-canvas,
+body.mobile-native #l2d-canvas2 {
+  touch-action: none !important;
+  -ms-touch-action: none !important;
+}
+body.mobile-native #l2d-canvas,
+body.mobile-native #l2d-canvas2 {
+  pointer-events: auto !important;
+}
+"""
+mobile_css.write_text(css)
 
 voice = Path('src/pet/voice.js')
 v = voice.read_text()
@@ -172,4 +214,4 @@ export function playReferenceVoice(file, opts = {}) {
 """
 voice.write_text(v)
 
-print('Android renderer adaptation complete: mobile UI + deterministic touch OGG path')
+print('Android renderer adaptation complete: mobile UI + guaranteed stage touch fallback + deterministic OGG')
