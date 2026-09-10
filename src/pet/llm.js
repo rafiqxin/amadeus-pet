@@ -26,14 +26,20 @@ function activeServer() {
 }
 
 export function getRemoteConfig() {
-  return { ...remote, apiKey: remote.apiKey ? '••••••••' : '' }
+  return {
+    endpoint: remote.endpoint,
+    model: remote.model,
+    apiKey: remote.apiKey ? '••••••••' : '',
+    hasApiKey: !!remote.apiKey,
+  }
 }
 
 export function setRemoteConfig(next = {}) {
+  const hasNewKey = Object.prototype.hasOwnProperty.call(next, 'apiKey')
   remote = {
-    endpoint: String(next.endpoint || '').trim().replace(/\/$/, ''),
-    apiKey: String(next.apiKey || '').trim(),
-    model: String(next.model || '').trim(),
+    endpoint: String(next.endpoint ?? remote.endpoint ?? '').trim().replace(/\/$/, ''),
+    apiKey: hasNewKey ? String(next.apiKey || '').trim() : remote.apiKey,
+    model: String(next.model ?? remote.model ?? '').trim(),
   }
   try { localStorage.setItem(REMOTE_KEY, JSON.stringify(remote)) } catch { /* ignore */ }
   available = false
