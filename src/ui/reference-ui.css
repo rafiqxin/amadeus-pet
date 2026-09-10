@@ -1,0 +1,87 @@
+/*
+ * Original Android Amadeus UI artwork layered around the existing Live2D
+ * renderer. No model/runtime selectors are changed here.
+ */
+#stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url('/Resources/amadeus-reference/bg1.png') center / cover no-repeat;
+  opacity: 0;
+  pointer-events: none;
+}
+body.console-open.call-mode #stage::before { opacity: 1; }
+
+body.console-open.call-mode .hud-frame {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+body.console-open.call-mode .hud-header,
+body.console-open.call-mode .hud-footer { display: none; }
+
+body.console-open.call-mode .hud-call {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+body.console-open.call-mode .hud-call::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  bottom: 26px;
+  width: 132px;
+  height: 76px;
+  background: url('/Resources/amadeus-reference/amadeus_icon_smaller.png') right bottom / contain no-repeat;
+  pointer-events: none;
+  z-index: 2;
+}
+body.console-open.call-mode .phone-bar { display: none; }
+
+body.console-open.call-mode .call-controls {
+  position: absolute;
+  top: 18px;
+  right: 14px;
+  margin: 0;
+  z-index: 5;
+  opacity: 0.18;
+  transition: opacity 0.15s;
+}
+body.console-open.call-mode .call-controls:hover { opacity: 0.95; }
+
+body.console-open.call-mode .call-accept-row {
+  position: absolute;
+  left: 50%;
+  bottom: 132px;
+  margin: 0;
+  transform: translateX(-50%);
+  z-index: 5;
+}
+
+body.console-open.call-mode .call-subtitle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  min-height: 100px;
+  max-height: 132px;
+  margin: 0;
+  padding: 17px 35px 12px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: hidden;
+  background: url('/Resources/amadeus-reference/subtitle_frame_big.png') center bottom / 100% 100% no-repeat;
+  border: 0;
+  color: #fff;
+  font-family: 'Courier New', 'Noto Sans Mono CJK SC', monospace;
+  font-size: 16px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-align: left;
+  text-shadow: 0 1px 2px #000;
+}
