@@ -79,7 +79,28 @@ export async function chat(text, { signal = null } = {}) {
 
 export async function classifyReferenceVoice(replyText, signal = null) {
   try {
-    const data = await postJson(target('/chat/completions'), { model: usingRemoteApi() ? remote.model : undefined, messages: buildVoiceClassifierMessages(replyText), temperature: 0, max_tokens: 96, stream: false }, signal, 15000)
+    const data = await postJson(target('/chat/completions'), { model: usingRemoteApi() ? remote.model : undefined, messages: buildVoiceClassifierMessages(replyText), temperature: 0, max_tokens: 320, stream: false }, signal, 20000)
     return parseVoiceClassifierResponse(data?.choices?.[0]?.message?.content || '')
   } catch { return null }
+}
+
+export async function translateForKurisuTts(replyText, signal = null) {
+  const text = String(replyText || '').trim()
+  if (!text) return ''
+  const messages = [
+    {
+      role: 'system',
+      content: [
+        'Translate the supplied Chinese AMA-DEUS assistant reply into natural spoken Japanese for Makise Kurisu TTS.',
+        'Preserve the exact meaning, tone, technical terminology and information content.',
+        'Do not add explanations, speaker names, quotation marks, markdown, stage directions or extra facts.',
+        'Return Japanese text only.',
+      ].join('\n'),
+    },
+    { role: 'user', content: text },
+  ]
+  const data = await postJson(target('/chat/completions'), { model: usingRemoteApi() ? remote.model : undefined, messages, temperature: 0.15, max_tokens: 500, stream: false }, signal, 30000)
+  const translated = String(data?.choices?.[0]?.message?.content || '').trim()
+  if (!translated) throw new Error('LLM returned an empty Japanese TTS translation')
+  return translated.replace(/^```(?:japanese|ja)?\s*/i, '').replace(/```$/i, '').trim()
 }
