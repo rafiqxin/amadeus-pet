@@ -6,6 +6,7 @@ on:
       - chatgpt/android-mobile
     paths:
       - '.github/workflows/build-android-apk.yml'
+      - 'scripts/**'
       - 'src/**'
       - 'index.html'
       - 'package.json'
@@ -35,127 +36,12 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
-          # Capacitor discovers native plugins from the app dependency graph.
-          # Do not use --no-save here: the generated Android shell must see
-          # SpeechRecognition as a real application dependency.
           npm install --save-exact @capacitor/core@7 @capacitor/android@7 @capacitor-community/speech-recognition@7.0.1
           npm install --save-dev --save-exact @capacitor/cli@7
           npm ls @capacitor/core @capacitor/android @capacitor-community/speech-recognition
 
       - name: Adapt renderer for Android mobile and touch reactions
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('src/main.js')
-          s = p.read_text()
-          s = s.replace(
-              "import { speak, voiceAvailable, matchReferenceVoice } from './pet/voice.js'",
-              "import { speak, voiceAvailable, matchReferenceVoice, playReferenceVoice } from './pet/voice.js'"
-          )
-          s = s.replace(
-              "import { mountMobileUi } from './ui/mobile.js'",
-              "import { mountMobileUi } from './ui/mobile.js'\nimport { nextTouchReaction } from './pet/touch-reactions.js'"
-          )
-          s = s.replace(
-              "const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)",
-              "const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)\n  const isAndroid = /Android/i.test(navigator.userAgent)\n  const isMobile = isIOS || isAndroid"
-          )
-          s = s.replace("document.body.classList.toggle('mobile-ios', isIOS)", "document.body.classList.toggle('mobile-ios', isIOS)\n  document.body.classList.toggle('mobile-android', isAndroid)\n  document.body.classList.toggle('mobile-native', isMobile)")
-          s = s.replace("if (isIOS) {\n      const r = stage.getBoundingClientRect()", "if (isMobile) {\n      const r = stage.getBoundingClientRect()")
-          s = s.replace("const mobileUi = isIOS ? mountMobileUi", "const mobileUi = isMobile ? mountMobileUi")
-          s = s.replace("onVoiceState() { hud.sysLog('iOS 语音输入已停用；将在 Android 版本接入') }", "onVoiceState(listening) { hud.sysLog(isAndroid ? (listening ? 'Android 语音识别：正在收音' : 'Android 语音识别：已停止') : 'iOS 语音输入已停用') }")
-          s = s.replace("hud.sysLog(isIOS ? 'iOS：仅匹配原版语音反应；未命中时保持纯文字' : '语音模块初始化完成')", "hud.sysLog(isAndroid ? 'Android：语音输入已启用；原版 OGG 反应可用' : (isIOS ? 'iOS：仅匹配原版语音反应；未命中时保持纯文字' : '语音模块初始化完成'))")
-          s = s.replace("if (isIOS) {\n    let resizeTimer", "if (isMobile) {\n    let resizeTimer")
-
-          helper_needle = "  let modelTapHandled = false\n"
-          helper = """  function runTouchReaction(hit) {
-    const touch = nextTouchReaction(hit?.area || 'body')
-    if (!touch) return
-    const target = hit?.model || pet
-    try { target?.setExpression?.(touch.expression) } catch {}
-    try { target?.startRandomMotion?.(touch.motion, Define.PriorityForce) } catch {}
-
-    if (!consoleOpen) bubble.say(touch.text, 2800)
-    hud.aiLog(touch.text)
-    hud.setCallSubtitle(touch.text)
-    hud.rineHer(touch.text, { read: true, quick: true })
-
-    const voiceOn = settings.get('voice') !== false
-    const res = voiceOn ? playReferenceVoice(touch.voice, {
-      onLevel: (level) => pet?.setMouthOpen(level),
-      onEnd: () => pet?.setMouthOpen(0),
-    }) : { played: false }
-    if (!res.played) pet?.setMouthOpen(0)
-    window.__amaLastTouch = { ...touch, voicePlayed: !!res.played }
-  }
-
-  let modelTapHandled = false
-"""
-          if helper_needle not in s:
-              raise SystemExit('modelTapHandled hook not found')
-          s = s.replace(helper_needle, helper, 1)
-
-          old_tap = """    onTap({ hit }) {
-      if (!hit) return
-      modelTapHandled = true
-      if (hit.area === 'head' || hit.area === 'mouth') hit.model.setRandomExpression()
-      else hit.model.startRandomMotion(Define.MotionGroupTapBody, Define.PriorityNormal)
-      sayLine(dialogue.clickLine())
-    },
-"""
-          new_tap = """    onTap({ hit }) {
-      if (!hit) return
-      modelTapHandled = true
-      runTouchReaction(hit)
-    },
-"""
-          if old_tap not in s:
-              raise SystemExit('Live2D tap handler not found')
-          s = s.replace(old_tap, new_tap, 1)
-
-          old_fallback = """    onClick() {
-      if (modelTapHandled) { modelTapHandled = false; return }
-      sayLine(dialogue.clickLine())
-    },
-"""
-          new_fallback = """    onClick() {
-      if (modelTapHandled) { modelTapHandled = false; return }
-      runTouchReaction({ area: 'body', model: pet })
-    },
-"""
-          if old_fallback not in s:
-              raise SystemExit('stage click handler not found')
-          s = s.replace(old_fallback, new_fallback, 1)
-          p.write_text(s)
-
-          p = Path('src/ui/mobile.css')
-          s = p.read_text().replace('body.mobile-ios', 'body.mobile-native')
-          p.write_text(s)
-
-          p = Path('src/pet/voice.js')
-          s = p.read_text()
-          s = s.replace("const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)", "const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)\nconst isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)\nconst isNativeMobile = isIOS || isAndroid")
-          s = s.replace('if (isIOS) {', 'if (isNativeMobile) {')
-          s = s.replace('return isIOS || ready', 'return isNativeMobile || ready')
-          if 'export function playReferenceVoice(' not in s:
-              s += """
-
-// Deterministic playback path for direct touch reactions. Unlike speak(),
-// this uses the bundled OGG id directly and therefore never depends on
-// semantic matching, TTS availability, SpeechRecognizer or network access.
-export function playReferenceVoice(file, opts = {}) {
-  const line = REF.find((item) => item.file === String(file || ''))
-  if (!line) {
-    opts.onLevel?.(0)
-    opts.onEnd?.()
-    return { duration: 0, matched: null, played: false }
-  }
-  return playReference(line, opts)
-}
-"""
-          p.write_text(s)
-          PY
+        run: python3 scripts/adapt-android-mobile.py
 
       - name: Open mobile CALL route
         run: |
@@ -250,8 +136,8 @@ export function playReferenceVoice(file, opts = {}) {
             '<uses-permission android:name="android.permission.INTERNET" />',
           ]
           for perm in perms:
-            if perm not in s:
-              s = s.replace('<application', perm + '\n    <application', 1)
+              if perm not in s:
+                  s = s.replace('<application', perm + '\n    <application', 1)
           p.write_text(s)
           PY
 
