@@ -25,7 +25,7 @@ body.console-open.call-mode #stage::before { opacity: 1; }
  */
 body.console-open.call-mode #l2d-canvas,
 body.console-open.call-mode #l2d-canvas2 {
-  transform: translateY(-128px) scale(1.085) !important;
+  transform: translateY(-55px) scale(0.92) !important;
   transform-origin: 50% 50% !important;
 }
 
