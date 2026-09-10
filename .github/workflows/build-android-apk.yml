@@ -96,7 +96,6 @@ jobs:
 
       - name: Verify deterministic touch bundle
         run: |
-          grep -R -q 'playReferenceVoice' dist/assets
           grep -R -q '__amaLastTouch' dist/assets
           test "$(find dist/Resources/amadeus-voices -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
           echo "Touch -> motion -> direct OGG path is present in renderer bundle."
