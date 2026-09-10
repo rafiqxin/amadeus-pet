@@ -1,0 +1,84 @@
+name: Build iOS CALL preview IPA
+
+on:
+  push:
+    branches:
+      - chatgpt/ios-call-preview
+    paths:
+      - '.github/workflows/build-ios-call-preview.yml'
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7
+
+      - name: Force CALL preview route
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("index.html")
+          s = p.read_text()
+          needle = '<script type="module" src="/src/main.js"></script>'
+          inject = '<script>location.hash = "#call";</script>\n  ' + needle
+          if needle not in s:
+              raise SystemExit("main.js script tag not found")
+          p.write_text(s.replace(needle, inject))
+          PY
+
+      - name: Build renderer
+        run: npm run build:render
+
+      - name: Create Capacitor iOS shell
+        run: |
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "com.rafiqxin.amadeus.callpreview",
+            "appName": "AMA-DEUS CALL Preview",
+            "webDir": "dist",
+            "bundledWebRuntime": false
+          }
+          JSON
+          npx cap add ios
+          npx cap sync ios
+
+      - name: Configure full-screen preview
+        run: |
+          PLIST="ios/App/App/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :UIStatusBarHidden bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIStatusBarHidden true" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIViewControllerBasedStatusBarAppearance bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIViewControllerBasedStatusBarAppearance false" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || true
+
+      - name: Build unsigned device app
+        run: |
+          xcodebuild             -workspace ios/App/App.xcworkspace             -scheme App             -configuration Release             -sdk iphoneos             -derivedDataPath build/DerivedData             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             build
+
+      - name: Package unsigned IPA
+        run: |
+          APP="build/DerivedData/Build/Products/Release-iphoneos/App.app"
+          test -d "$APP"
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          cd build
+          zip -qry AMA-DEUS-Call-Preview-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-Call-Preview-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AMA-DEUS-Call-Preview-unsigned-IPA
+          path: build/AMA-DEUS-Call-Preview-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
