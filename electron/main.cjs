@@ -41,13 +41,11 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver')
 
   const page = process.env.AMA_DEMO ? 'demo.html' : 'index.html'
-  win.loadFile(
-    path.join(__dirname, '..', 'dist', page),
-    process.env.AMA_HASH ? { hash: process.env.AMA_HASH } : undefined
-  )
 
+  // Register capture hooks before navigation. CI can load the local page fast
+  // enough that attaching this listener after loadFile() races did-finish-load.
   if (process.env.AMA_CAPTURE) {
-    win.webContents.on('did-finish-load', () => {
+    win.webContents.once('did-finish-load', () => {
       const delay = Number(process.env.AMA_CAPTURE_DELAY || 4000)
       const burst = Number(process.env.AMA_CAPTURE_BURST || 1)
       for (let i = 0; i < burst; i++) {
@@ -66,6 +64,11 @@ function createWindow() {
       }
     })
   }
+
+  win.loadFile(
+    path.join(__dirname, '..', 'dist', page),
+    process.env.AMA_HASH ? { hash: process.env.AMA_HASH } : undefined
+  )
 
   win.on('closed', () => {
     dragSession = null
