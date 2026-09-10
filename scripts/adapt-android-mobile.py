@@ -95,10 +95,8 @@ helper = """  let lastTouchReactionAt = 0
   }
 
   function runTouchReaction(hit) {
-    // Cubism hitTest and the stage fallback can both observe one physical tap.
-    // Keep only the first reaction so one tap never plays two OGG clips.
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
-    if (now - lastTouchReactionAt < 160) return
+    if (now - lastTouchReactionAt < 220) return
     lastTouchReactionAt = now
 
     const touch = nextTouchReaction(hit?.area || 'body')
@@ -135,6 +133,10 @@ old_tap = """    onTap({ hit }) {
 """
 new_tap = """    onTap({ hit }) {
       if (!hit) return
+      // Native mobile has exactly one gesture owner: the stage pointer path.
+      // Cubism also emits onTap for the same physical touch; consuming both is
+      // what caused two different OGG reactions from one tap.
+      if (isMobile) return
       modelTapHandled = true
       runTouchReaction(hit)
     },
@@ -147,7 +149,7 @@ old_fallback = """    onClick() {
     },
 """
 new_fallback = """    onClick(e) {
-      if (modelTapHandled) { modelTapHandled = false; return }
+      if (!isMobile && modelTapHandled) { modelTapHandled = false; return }
       runTouchReaction({ area: isMobile ? mobileAreaFromPoint(e) : 'body', model: pet })
     },
 """
@@ -161,8 +163,7 @@ if 'body.mobile-ios' not in css:
 css = css.replace('body.mobile-ios', 'body.mobile-native')
 css += """
 
-/* Native mobile CALL input must reach the Live2D canvas.  Android WebView may
-   otherwise turn a pointer sequence into a pan/cancel gesture before pointerup. */
+/* Native mobile CALL input must reach the Live2D canvas. */
 body.mobile-native #stage,
 body.mobile-native #l2d-canvas,
 body.mobile-native #l2d-canvas2 {
@@ -196,6 +197,15 @@ v = replace_one_of(
     'return isNativeMobile||ready',
     'native voice availability',
 )
+# When a reference OGG starts, explicitly cancel any Web Speech utterance that
+# may still be alive in the WebView.  This makes OGG the sole speech source on
+# native mobile and prevents a synthesized voice from talking over Kurisu.
+v = replace_required(
+    v,
+    "activeAudio?.pause(); stopAnalyser()",
+    "activeAudio?.pause(); window.speechSynthesis?.cancel(); stopAnalyser()",
+    'reference playback exclusivity',
+)
 if 'export function playReferenceVoice(' not in v:
     v += """
 
@@ -214,4 +224,4 @@ export function playReferenceVoice(file, opts = {}) {
 """
 voice.write_text(v)
 
-print('Android renderer adaptation complete: mobile UI + guaranteed stage touch fallback + deterministic OGG')
+print('Android renderer adaptation complete: single-owner mobile taps + exclusive deterministic OGG')
