@@ -3,11 +3,11 @@
 
 const EMOTION_MAP = {
   normal:       { expression: 'f01', motion: null },
-  happy:        { expression: 'f04', motion: 'flickhead' },
-  pleasant:     { expression: 'f04', motion: 'flickhead' },
-  amused:       { expression: 'f04', motion: 'flickhead' },
-  embarrassed:  { expression: 'f04', motion: 'pinchin' },
-  blush:        { expression: 'f04', motion: 'pinchin' },
+  happy:        { expression: 'f04', motion: 'flick_head' },
+  pleasant:     { expression: 'f04', motion: 'flick_head' },
+  amused:       { expression: 'f04', motion: 'flick_head' },
+  embarrassed:  { expression: 'f04', motion: 'pinch_in' },
+  blush:        { expression: 'f04', motion: 'pinch_in' },
   worried:      { expression: 'f02', motion: null },
   sad:          { expression: 'f02', motion: null },
   disappointed: { expression: 'f02', motion: 'shake' },
