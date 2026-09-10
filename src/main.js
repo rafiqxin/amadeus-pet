@@ -17,6 +17,7 @@ import { speak, voiceAvailable } from './pet/voice.js'
 import { playRingTone } from './pet/tone.js'
 import { chat, checkServer, llmAvailable } from './pet/llm.js'
 import { remember, recall } from './pet/memory.js'
+import { mountMobileUi } from './ui/mobile.js'
 
 const MODELS = [
   { dir: './models/kurisu/', json: 'kurisu.model.json', name: 'KURISU // 助手', format: 'cubism2' },
@@ -42,10 +43,19 @@ async function boot() {
   let modelIndex = 0
   let firstLoad = false
 
-  // Fixed phone-ratio window (480×853). The canvas backing follows it once
-  // per model load — no user resizing, no frame resize module.
-  const WIN_W = 480
-  const WIN_H = 853
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+  document.body.classList.toggle('mobile-ios', isIOS)
+
+  function viewportSize() {
+    if (isIOS) {
+      const r = stage.getBoundingClientRect()
+      return {
+        w: Math.max(1, Math.round(r.width || window.innerWidth || 393)),
+        h: Math.max(1, Math.round(r.height || window.innerHeight || 852)),
+      }
+    }
+    return { w: 480, h: 853 }
+  }
 
   const bubble = mountBubble(hudRoot)
   const dialogue = createDialogue()
@@ -152,7 +162,7 @@ async function boot() {
       hud.sysLog(`记忆数据同步完成（${MODELS[modelIndex].name}）`)
       hud.setLinkStatus(true)
       // keep the canvas backing store in step with the fixed window
-      pet?.resize(WIN_W, WIN_H)
+      { const v = viewportSize(); pet?.resize(v.w, v.h) }
       if (firstLoad) return
       firstLoad = true
       await bootDone
@@ -198,7 +208,7 @@ async function boot() {
     const m = MODELS[modelIndex]
     hud.sysLog(`切换记忆数据：${m.name}`)
     pet = await getApp(m.format)
-    pet.resize(WIN_W, WIN_H)
+    { const v = viewportSize(); pet.resize(v.w, v.h) }
     pet.loadModel(m.dir, m.json)
   }
 
@@ -252,6 +262,17 @@ async function boot() {
       ipc?.quit()
     },
   })
+
+  const mobileUi = isIOS ? mountMobileUi(hudRoot, {
+    onSend(text) {
+      hud.userLog(text)
+      hud.rineUser(text)
+      brain(text)
+    },
+    onVoice() {
+      hud.sysLog('移动端语音入口已打开（STT/TTS 下一阶段接入）')
+    },
+  }) : null
 
   hud.setVoiceState(settings.get('voice') !== false && voiceAvailable())
 
@@ -354,8 +375,23 @@ async function boot() {
   }
 
   pet = await getApp(MODELS[modelIndex].format)
+  { const v = viewportSize(); pet.resize(v.w, v.h) }
   pet.loadModel(MODELS[modelIndex].dir, MODELS[modelIndex].json)
-  window.__amaPet = { pet, hud, bubble, settings }
+
+  if (isIOS) {
+    let resizeTimer = null
+    const syncViewport = () => {
+      clearTimeout(resizeTimer)
+      resizeTimer = setTimeout(() => {
+        const v = viewportSize()
+        pet?.resize(v.w, v.h)
+      }, 80)
+    }
+    window.addEventListener('resize', syncViewport)
+    window.addEventListener('orientationchange', syncViewport)
+  }
+
+  window.__amaPet = { pet, hud, bubble, settings, mobileUi }
 
   // Test/demo hooks via URL hash.
   if (location.hash === '#call') {
