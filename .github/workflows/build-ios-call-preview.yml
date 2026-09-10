@@ -6,6 +6,10 @@ on:
       - chatgpt/ios-call-preview
     paths:
       - '.github/workflows/build-ios-call-preview.yml'
+      - 'src/**'
+      - 'index.html'
+      - 'package.json'
+      - 'vite.config.js'
   workflow_dispatch:
 
 jobs:
