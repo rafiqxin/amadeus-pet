@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
-          npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7
+          npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7 @capacitor-community/speech-recognition@7.0.1
 
       - name: Force CALL preview route
         run: |
@@ -75,6 +75,9 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :UIStatusBarHidden bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIStatusBarHidden true" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :UIViewControllerBasedStatusBarAppearance bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIViewControllerBasedStatusBarAppearance false" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSSpeechRecognitionUsageDescription string '用于将你的语音转换为文字并发送给 Amadeus。'" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSSpeechRecognitionUsageDescription '用于将你的语音转换为文字并发送给 Amadeus。'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string '用于语音聊天时采集你的声音。'" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription '用于语音聊天时采集你的声音。'" "$PLIST"
+
 
       - name: Build unsigned device app
         run: |
@@ -88,12 +91,12 @@ jobs:
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
           cd build
-          zip -qry AMA-DEUS-Call-Preview-unsigned.ipa Payload
-          shasum -a 256 AMA-DEUS-Call-Preview-unsigned.ipa
+          zip -qry AMA-DEUS-Mobile-Voice-Preview-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-Mobile-Voice-Preview-unsigned.ipa
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Call-Preview-unsigned-IPA
-          path: build/AMA-DEUS-Call-Preview-unsigned.ipa
+          name: AMA-DEUS-Mobile-Voice-Preview-unsigned-IPA
+          path: build/AMA-DEUS-Mobile-Voice-Preview-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
