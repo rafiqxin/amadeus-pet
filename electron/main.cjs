@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, screen, nativeImage } = require('electron')
 const path = require('path')
 
 let win = null
+let dragSession = null
 
 const PET_W = 480
 const PET_H = 853 // phone ratio 9:16 (Amadeus phone-app proportions)
@@ -17,7 +18,7 @@ function createWindow() {
     y: 200,
     transparent: true,
     frame: false,
-    resizable: false, // fixed phone-ratio window
+    resizable: false,
     hasShadow: false,
     alwaysOnTop: true,
     skipTaskbar: true,
@@ -29,19 +30,22 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
-      // Local-only app loading assets via file:// fetch.
       webSecurity: false,
     },
   })
+
+  // Lock the frameless window to one physical app size. On Windows this
+  // protects against DPI/snap-related bounds changes while dragging.
+  win.setMinimumSize(PET_W, PET_H)
+  win.setMaximumSize(PET_W, PET_H)
   win.setAlwaysOnTop(true, 'screen-saver')
+
   const page = process.env.AMA_DEMO ? 'demo.html' : 'index.html'
   win.loadFile(
     path.join(__dirname, '..', 'dist', page),
     process.env.AMA_HASH ? { hash: process.env.AMA_HASH } : undefined
   )
 
-  // Debug: capture renderer output to PNG (AMA_CAPTURE=/path/to.png,
-  // AMA_CAPTURE_BURST=n → n frames 2.5s apart, suffixed _0.._n-1)
   if (process.env.AMA_CAPTURE) {
     win.webContents.on('did-finish-load', () => {
       const delay = Number(process.env.AMA_CAPTURE_DELAY || 4000)
@@ -63,24 +67,65 @@ function createWindow() {
     })
   }
 
-  win.on('closed', () => { win = null })
+  win.on('closed', () => {
+    dragSession = null
+    win = null
+  })
+}
+
+function setPetPosition(x, y) {
+  if (!win) return
+
+  const cursor = screen.getCursorScreenPoint()
+  const display = screen.getDisplayNearestPoint(cursor)
+  const b = display.workArea
+  const nx = clamp(Math.round(x), b.x - 200, b.x + b.width - 60)
+  const ny = clamp(Math.round(y), b.y - 60, b.y + b.height - 60)
+
+  // Re-assert size on every move so Windows cannot mutate bounds while
+  // crossing DPI domains on a transparent frameless window.
+  win.setBounds({ x: nx, y: ny, width: PET_W, height: PET_H }, false)
 }
 
 /* ---- IPC: dragging the pet ---------------------------------- */
-ipcMain.on('pet:drag-move', (_e, dx, dy) => {
+// Do all position math in Electron main-process DIP coordinates. Mixing DOM
+// screenX/screenY with BrowserWindow coordinates is unreliable on Windows when
+// display scaling differs.
+ipcMain.on('pet:drag-start', () => {
   if (!win) return
+  const cursor = screen.getCursorScreenPoint()
   const [wx, wy] = win.getPosition()
-  const displays = screen.getAllDisplays()
-  let ok = false
-  for (const d of displays) {
-    const b = d.workArea
-    if (wx + dx >= b.x - 200 && wy + dy >= b.y - 60 && wx + dx <= b.x + b.width - 60 && wy + dy <= b.y + b.height - 60) ok = true
+  dragSession = {
+    offsetX: cursor.x - wx,
+    offsetY: cursor.y - wy,
   }
-  if (ok) win.setPosition(wx + Math.round(dx), wy + Math.round(dy))
+})
+
+ipcMain.on('pet:drag-move', () => {
+  if (!win) return
+  const cursor = screen.getCursorScreenPoint()
+
+  if (!dragSession) {
+    const [wx, wy] = win.getPosition()
+    dragSession = {
+      offsetX: cursor.x - wx,
+      offsetY: cursor.y - wy,
+    }
+    return
+  }
+
+  setPetPosition(
+    cursor.x - dragSession.offsetX,
+    cursor.y - dragSession.offsetY,
+  )
+})
+
+ipcMain.on('pet:drag-end', () => {
+  dragSession = null
 })
 
 ipcMain.on('pet:set-position', (_e, x, y) => {
-  if (win) win.setPosition(Math.round(x), Math.round(y))
+  setPetPosition(x, y)
 })
 
 ipcMain.handle('pet:get-position', () => (win ? win.getPosition() : [0, 0]))
@@ -101,7 +146,12 @@ ipcMain.on('pet:snap-bottom', () => {
   if (!win) return
   const b = screen.getPrimaryDisplay().workArea
   const [wx] = win.getPosition()
-  win.setPosition(clamp(wx, b.x, b.x + b.width - PET_W), b.y + b.height - PET_H + 8)
+  win.setBounds({
+    x: clamp(wx, b.x, b.x + b.width - PET_W),
+    y: b.y + b.height - PET_H + 8,
+    width: PET_W,
+    height: PET_H,
+  }, false)
 })
 
 /* ---- single instance + tray-less minimal lifecycle ----------- */
@@ -113,18 +163,13 @@ if (!gotLock) {
 
   app.commandLine.appendSwitch('enable-transparent-visuals')
   if (process.platform === 'linux') {
-    // Force X11 (XWayland) backend: transparent windows + mouse passthrough
-    // only work reliably there; Wayland lacks alpha compositing on GNOME.
     app.commandLine.appendSwitch('ozone-platform', 'x11')
     if (process.env.AMA_HWGL) {
-      // Use ANGLE on Mesa (llvmpipe software GL) instead of SwiftShader.
       app.commandLine.appendSwitch('use-gl', 'angle')
       app.commandLine.appendSwitch('use-angle', 'gl')
       app.commandLine.appendSwitch('ignore-gpu-blocklist')
       app.commandLine.appendSwitch('enable-unsafe-swiftshader')
     } else {
-      // VM has no 3D acceleration: run everything on the software rasterizer
-      // and allow SwiftShader for WebGL (Live2D rendering).
       app.commandLine.appendSwitch('disable-gpu')
       app.commandLine.appendSwitch('enable-unsafe-swiftshader')
       app.commandLine.appendSwitch('in-process-gpu')
