@@ -269,8 +269,8 @@ async function boot() {
       hud.rineUser(text)
       brain(text)
     },
-    onVoice() {
-      hud.sysLog('移动端语音入口已打开（STT/TTS 下一阶段接入）')
+    onVoiceState(listening) {
+      hud.sysLog(listening ? '移动端语音识别：正在收音' : '移动端语音识别：已停止')
     },
   }) : null
 
