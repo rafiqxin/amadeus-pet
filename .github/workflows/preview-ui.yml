@@ -31,7 +31,7 @@ jobs:
         run: |
           mkdir -p preview
           set +e
-          timeout 12s xvfb-run -a env             AMA_CAPTURE="$PWD/preview/boot.png"             AMA_CAPTURE_DELAY=2500             npm run app
+          timeout 12s xvfb-run -a env             AMA_CAPTURE="$PWD/preview/boot.png"             AMA_CAPTURE_DELAY=2500             npm run app -- --no-sandbox
           code=$?
           set -e
           if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi
@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          timeout 24s xvfb-run -a env             AMA_CAPTURE="$PWD/preview/main.png"             AMA_CAPTURE_DELAY=18500             npm run app
+          timeout 24s xvfb-run -a env             AMA_CAPTURE="$PWD/preview/main.png"             AMA_CAPTURE_DELAY=18500             npm run app -- --no-sandbox
           code=$?
           set -e
           if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi
@@ -51,7 +51,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          timeout 24s xvfb-run -a env             AMA_HASH=call             AMA_CAPTURE="$PWD/preview/call.png"             AMA_CAPTURE_DELAY=18500             npm run app
+          timeout 24s xvfb-run -a env             AMA_HASH=call             AMA_CAPTURE="$PWD/preview/call.png"             AMA_CAPTURE_DELAY=18500             npm run app -- --no-sandbox
           code=$?
           set -e
           if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi
