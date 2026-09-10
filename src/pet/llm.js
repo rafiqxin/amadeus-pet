@@ -13,7 +13,39 @@
                top openers I/What/You/No/Hey, 16% '!', 15% '...')
    No verbatim dialogue from any work is reproduced here. */
 
-const SERVER = 'http://127.0.0.1:8090'
+const LOCAL_SERVER = 'http://127.0.0.1:8090'
+const REMOTE_KEY = 'amadeus-remote-llm-v1'
+
+let remote = { endpoint: '', apiKey: '', model: '' }
+try {
+  remote = { ...remote, ...(JSON.parse(localStorage.getItem(REMOTE_KEY) || '{}')) }
+} catch { /* ignore malformed saved config */ }
+
+function activeServer() {
+  return remote.endpoint ? remote.endpoint.replace(/\/$/, '') : LOCAL_SERVER
+}
+
+export function getRemoteConfig() {
+  return { ...remote, apiKey: remote.apiKey ? '••••••••' : '' }
+}
+
+export function setRemoteConfig(next = {}) {
+  remote = {
+    endpoint: String(next.endpoint || '').trim().replace(/\/$/, ''),
+    apiKey: String(next.apiKey || '').trim(),
+    model: String(next.model || '').trim(),
+  }
+  try { localStorage.setItem(REMOTE_KEY, JSON.stringify(remote)) } catch { /* ignore */ }
+  available = false
+}
+
+export function clearRemoteConfig() {
+  remote = { endpoint: '', apiKey: '', model: '' }
+  try { localStorage.removeItem(REMOTE_KEY) } catch { /* ignore */ }
+  available = false
+}
+
+export function usingRemoteApi() { return !!remote.endpoint }
 
 /* ---- Layer 1 · 人格内核 (trait facts from Kurisu_EN.md) ---- */
 const LAYER1_PERSONA = [
@@ -66,8 +98,14 @@ let history = [] // [{role:'user'|'assistant', content}]
 
 export async function checkServer() {
   try {
-    const r = await fetch(`${SERVER}/health`, { signal: AbortSignal.timeout(2500) })
-    available = r.ok
+    if (remote.endpoint) {
+      const headers = remote.apiKey ? { Authorization: `Bearer ${remote.apiKey}` } : {}
+      const r = await fetch(`${activeServer()}/models`, { headers, signal: AbortSignal.timeout(5000) })
+      available = r.ok
+    } else {
+      const r = await fetch(`${LOCAL_SERVER}/health`, { signal: AbortSignal.timeout(2500) })
+      available = r.ok
+    }
   } catch {
     available = false
   }
@@ -116,11 +154,17 @@ export async function chat(userText, ctx = {}, onDelta = null) {
   const sig = signal ? AbortSignal.any([signal, timeout]) : timeout
 
   try {
-    const r = await fetch(`${SERVER}/v1/chat/completions`, {
+    const target = remote.endpoint
+      ? `${activeServer()}/chat/completions`
+      : `${LOCAL_SERVER}/v1/chat/completions`
+    const headers = { 'Content-Type': 'application/json' }
+    if (remote.apiKey) headers.Authorization = `Bearer ${remote.apiKey}`
+    const r = await fetch(target, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         messages,
+        ...(remote.model ? { model: remote.model } : {}),
         max_tokens: 150,
         temperature: 0.8,
         top_p: 0.9,
