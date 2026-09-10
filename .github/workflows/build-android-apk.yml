@@ -42,13 +42,21 @@ jobs:
           npm install --save-dev --save-exact @capacitor/cli@7
           npm ls @capacitor/core @capacitor/android @capacitor-community/speech-recognition
 
-      - name: Adapt renderer for Android mobile
+      - name: Adapt renderer for Android mobile and touch reactions
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
           p = Path('src/main.js')
           s = p.read_text()
+          s = s.replace(
+              "import { speak, voiceAvailable, matchReferenceVoice } from './pet/voice.js'",
+              "import { speak, voiceAvailable, matchReferenceVoice, playReferenceVoice } from './pet/voice.js'"
+          )
+          s = s.replace(
+              "import { mountMobileUi } from './ui/mobile.js'",
+              "import { mountMobileUi } from './ui/mobile.js'\nimport { nextTouchReaction } from './pet/touch-reactions.js'"
+          )
           s = s.replace(
               "const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)",
               "const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)\n  const isAndroid = /Android/i.test(navigator.userAgent)\n  const isMobile = isIOS || isAndroid"
@@ -59,6 +67,66 @@ jobs:
           s = s.replace("onVoiceState() { hud.sysLog('iOS 语音输入已停用；将在 Android 版本接入') }", "onVoiceState(listening) { hud.sysLog(isAndroid ? (listening ? 'Android 语音识别：正在收音' : 'Android 语音识别：已停止') : 'iOS 语音输入已停用') }")
           s = s.replace("hud.sysLog(isIOS ? 'iOS：仅匹配原版语音反应；未命中时保持纯文字' : '语音模块初始化完成')", "hud.sysLog(isAndroid ? 'Android：语音输入已启用；原版 OGG 反应可用' : (isIOS ? 'iOS：仅匹配原版语音反应；未命中时保持纯文字' : '语音模块初始化完成'))")
           s = s.replace("if (isIOS) {\n    let resizeTimer", "if (isMobile) {\n    let resizeTimer")
+
+          helper_needle = "  let modelTapHandled = false\n"
+          helper = """  function runTouchReaction(hit) {
+    const touch = nextTouchReaction(hit?.area || 'body')
+    if (!touch) return
+    const target = hit?.model || pet
+    try { target?.setExpression?.(touch.expression) } catch {}
+    try { target?.startRandomMotion?.(touch.motion, Define.PriorityForce) } catch {}
+
+    if (!consoleOpen) bubble.say(touch.text, 2800)
+    hud.aiLog(touch.text)
+    hud.setCallSubtitle(touch.text)
+    hud.rineHer(touch.text, { read: true, quick: true })
+
+    const voiceOn = settings.get('voice') !== false
+    const res = voiceOn ? playReferenceVoice(touch.voice, {
+      onLevel: (level) => pet?.setMouthOpen(level),
+      onEnd: () => pet?.setMouthOpen(0),
+    }) : { played: false }
+    if (!res.played) pet?.setMouthOpen(0)
+    window.__amaLastTouch = { ...touch, voicePlayed: !!res.played }
+  }
+
+  let modelTapHandled = false
+"""
+          if helper_needle not in s:
+              raise SystemExit('modelTapHandled hook not found')
+          s = s.replace(helper_needle, helper, 1)
+
+          old_tap = """    onTap({ hit }) {
+      if (!hit) return
+      modelTapHandled = true
+      if (hit.area === 'head' || hit.area === 'mouth') hit.model.setRandomExpression()
+      else hit.model.startRandomMotion(Define.MotionGroupTapBody, Define.PriorityNormal)
+      sayLine(dialogue.clickLine())
+    },
+"""
+          new_tap = """    onTap({ hit }) {
+      if (!hit) return
+      modelTapHandled = true
+      runTouchReaction(hit)
+    },
+"""
+          if old_tap not in s:
+              raise SystemExit('Live2D tap handler not found')
+          s = s.replace(old_tap, new_tap, 1)
+
+          old_fallback = """    onClick() {
+      if (modelTapHandled) { modelTapHandled = false; return }
+      sayLine(dialogue.clickLine())
+    },
+"""
+          new_fallback = """    onClick() {
+      if (modelTapHandled) { modelTapHandled = false; return }
+      runTouchReaction({ area: 'body', model: pet })
+    },
+"""
+          if old_fallback not in s:
+              raise SystemExit('stage click handler not found')
+          s = s.replace(old_fallback, new_fallback, 1)
           p.write_text(s)
 
           p = Path('src/ui/mobile.css')
@@ -70,6 +138,22 @@ jobs:
           s = s.replace("const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)", "const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)\nconst isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)\nconst isNativeMobile = isIOS || isAndroid")
           s = s.replace('if (isIOS) {', 'if (isNativeMobile) {')
           s = s.replace('return isIOS || ready', 'return isNativeMobile || ready')
+          if 'export function playReferenceVoice(' not in s:
+              s += """
+
+// Deterministic playback path for direct touch reactions. Unlike speak(),
+// this uses the bundled OGG id directly and therefore never depends on
+// semantic matching, TTS availability, SpeechRecognizer or network access.
+export function playReferenceVoice(file, opts = {}) {
+  const line = REF.find((item) => item.file === String(file || ''))
+  if (!line) {
+    opts.onLevel?.(0)
+    opts.onEnd?.()
+    return { duration: 0, matched: null, played: false }
+  }
+  return playReference(line, opts)
+}
+"""
           p.write_text(s)
           PY
 
@@ -108,8 +192,28 @@ jobs:
           done
           test "$(find "$dst" -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
 
+      - name: Verify touch reaction OGG bank
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          import { TOUCH_REACTION_VOICE_IDS } from './src/pet/touch-reactions.js'
+          if (TOUCH_REACTION_VOICE_IDS.length < 10) throw new Error('touch reaction bank unexpectedly small')
+          for (const id of TOUCH_REACTION_VOICE_IDS) {
+            const file = `public/Resources/amadeus-voices/${id}.ogg`
+            if (!fs.existsSync(file) || fs.statSync(file).size === 0) throw new Error(`missing touch OGG: ${id}`)
+          }
+          console.log(`Verified ${TOUCH_REACTION_VOICE_IDS.length} deterministic touch OGG reactions`)
+          NODE
+
       - name: Build renderer
         run: npm run build:render
+
+      - name: Verify deterministic touch bundle
+        run: |
+          grep -R -q 'playReferenceVoice' dist/assets
+          grep -R -q '__amaLastTouch' dist/assets
+          test "$(find dist/Resources/amadeus-voices -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
+          echo "Touch -> motion -> direct OGG path is present in renderer bundle."
 
       - name: Create Capacitor Android shell
         run: |
@@ -157,28 +261,28 @@ jobs:
 
       - name: Package APK
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk
-          sha256sum AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk.sha256
+          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk
+          sha256sum AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Android-v0.1.0-alpha.2-debug-APK
+          name: AMA-DEUS-Android-v0.1.0-alpha.3-debug-APK
           path: |
-            AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk
-            AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk.sha256
+            AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk
+            AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish Android prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.2]')
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.3]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "android-v0.1.0-alpha.2" \
-            "AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk#AMA-DEUS Android v0.1.0 alpha 2 APK" \
-            "AMA-DEUS-Android-v0.1.0-alpha.2-debug.apk.sha256#SHA-256 checksum" \
+          gh release create "android-v0.1.0-alpha.3" \
+            "AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk#AMA-DEUS Android v0.1.0 alpha 3 APK" \
+            "AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk.sha256#SHA-256 checksum" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS Android v0.1.0 alpha 2" \
-            --notes "Android/LineageOS speech hotfix. The Capacitor SpeechRecognition package is now installed as a real application dependency before native project generation, and CI hard-fails unless SpeechRecognition is present in capacitor.plugins.json and the Android Gradle plugin graph. Includes the existing mobile CALL UI and 45 bundled Amadeus reference voice clips. Debug-signed prerelease for sideload testing." \
+            --title "AMA-DEUS Android v0.1.0 alpha 3 · Touch Reaction" \
+            --notes "Touch Reaction preview for Android/LineageOS. Tapping Kurisu now selects a deterministic local reaction, starts a real Cubism 2 motion (flick_head, pinch_in, tap_body or shake), sets the matching expression, and plays the bundled reference OGG directly by file id with audio-driven lip sync. Repeated body pokes escalate into annoyed reactions. This path is fully local and does not require SpeechRecognition, DeepSeek or network access. Also fixes invalid flickhead/pinchin motion group names." \
             --prerelease
