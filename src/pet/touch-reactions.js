@@ -1,7 +1,9 @@
 /* Deterministic local reactions for direct character taps.
-   Every entry points to one of the bundled Amadeus reference OGG files, so
-   touch feedback never depends on LLM output, network access or fuzzy text
-   matching. */
+   Touch reactions intentionally use only the 48 kHz mono reference cohort.
+   The original voice pack mixes several source/mastering groups (22.05 kHz
+   stereo, 44.1 kHz mono, 48 kHz mono); mixing those inside one touch session
+   made Kurisu sound like two different voices.  Other clips remain bundled for
+   explicit/reference playback, but direct taps stay on this consistent cohort. */
 
 const HEAD = [
   { voice: 'what_is_it', text: '怎么了？', mood: 'HAPPY', expression: 'f04', motion: 'flick_head' },
@@ -15,21 +17,19 @@ const MOUTH = [
   { voice: 'gah', text: '咔。', mood: 'INDIFFERENT', expression: 'f01', motion: 'pinch_in' },
   { voice: 'gah_extended', text: '咔、啊、嗯嗯嗯…', mood: 'BLUSH', expression: 'f04', motion: 'pinch_in' },
   { voice: 'still_not_happy', text: '我对这件事不是很满意。', mood: 'BLUSH', expression: 'f04', motion: 'pinch_in' },
-  { voice: 'dont_call_me_like_that', text: '别那样叫我。', mood: 'ANGRY', expression: 'f03', motion: 'shake' },
 ]
 
 const BODY_CALM = [
-  { voice: 'i_guess', text: '也对呢。', mood: 'INDIFFERENT', expression: 'f01', motion: 'tap_body' },
-  { voice: 'sounds_tough', text: '很辛苦呢。', mood: 'SIDE', expression: 'f02', motion: 'tap_body' },
   { voice: 'you_sure', text: '是这样啊。', mood: 'SIDED_WORRIED', expression: 'f02', motion: 'tap_body' },
   { voice: 'what_do_you_want', text: '需要帮助吗？', mood: 'HAPPY', expression: 'f04', motion: 'tap_body' },
+  { voice: 'senpai_question', text: '那么前辈，我能再问一个问题吗？', mood: 'SIDE', expression: 'f02', motion: 'tap_body' },
+  { voice: 'look_forward_to_working', text: '请多指教。', mood: 'HAPPY', expression: 'f04', motion: 'tap_body' },
 ]
 
 const BODY_ANNOYED = [
-  { voice: 'daga_kotowaru', text: '但是我拒绝。', mood: 'ANNOYED', expression: 'f03', motion: 'shake' },
-  { voice: 'this_guy_hopeless', text: '这家伙没救了，必须要做点什么。', mood: 'DISAPPOINTED', expression: 'f02', motion: 'shake' },
-  { voice: 'pervert_confirmed', text: '变态确定。', mood: 'PISSED', expression: 'f03', motion: 'shake' },
-  { voice: 'pervert_idot_wanttodie', text: '你个变态！你是笨蛋？想死吗？！', mood: 'ANGRY', expression: 'f03', motion: 'shake' },
+  { voice: 'still_not_happy', text: '我对这件事不是很满意。', mood: 'ANNOYED', expression: 'f03', motion: 'shake' },
+  { voice: 'tm_nonsense', text: '毫无意义呢。', mood: 'DISAPPOINTED', expression: 'f02', motion: 'shake' },
+  { voice: 'huh_why_say', text: '哎？为什么？', mood: 'PISSED', expression: 'f03', motion: 'shake' },
 ]
 
 const ALL = [...HEAD, ...MOUTH, ...BODY_CALM, ...BODY_ANNOYED]
@@ -61,8 +61,6 @@ export function nextTouchReaction(area = 'body') {
     pool = MOUTH
   } else {
     bodyPokes += 1
-    // Repeated body pokes escalate naturally instead of immediately jumping
-    // to the strongest reaction.
     const annoyed = bodyPokes >= 3 && (bodyPokes % 3 === 0 || Math.random() < 0.35)
     pool = annoyed ? BODY_ANNOYED : BODY_CALM
   }
