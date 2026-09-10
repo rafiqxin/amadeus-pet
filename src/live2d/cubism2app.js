@@ -5,7 +5,6 @@
 import * as PIXI from 'pixi.js'
 import { Live2DModel } from 'pixi-live2d-display/cubism2'
 
-// pld needs a ticker class registered; default autoUpdate is OFF.
 Live2DModel.registerTicker(PIXI.Ticker)
 
 let W = 480
@@ -27,16 +26,15 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
   let model = null
   let nextIdleAt = 0
   let disposed = false
-  let aabbData = null // cached ground-truth AABB for refits on window zoom
+  let aabbData = null
 
   function refit() {
     if (!model || !aabbData) return
     const s = Math.min((W * 0.96) / aabbData.w, (H * 0.96) / aabbData.h)
-    // Pivot-free placement: anchor 0 → pivot (0,0) → screen = x + p*s.
     model.anchor.set(0, 0)
     model.scale.set(s)
     model.x = W / 2 - aabbData.cx * s
-    model.y = H / 2 - aabbData.cy * s - 20 // empirical -20px renderer offset
+    model.y = H / 2 - aabbData.cy * s - 20
   }
 
   const look = { x: 0, y: 0, tx: 0, ty: 0 }
@@ -46,12 +44,9 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
   let downY = 0
 
   function setParam(name, v) {
-    try {
-      model?.internalModel.coreModel.setParamFloat(name, v, 1)
-    } catch { /* param may not exist */ }
+    try { model?.internalModel.coreModel.setParamFloat(name, v, 1) } catch {}
   }
 
-  /* ---- pointer handling -------------------------------------- */
   const localPoint = (e) => {
     const rect = canvas.getBoundingClientRect()
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
@@ -65,10 +60,7 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
   }
   const onMove = (e) => {
     const p = localPoint(e)
-    if (captured) {
-      if (Math.abs(e.screenX - downX) + Math.abs(e.screenY - downY) > 6) moved = true
-    }
-    // hover → look-at target (normalised, y-up)
+    if (captured && Math.abs(e.screenX - downX) + Math.abs(e.screenY - downY) > 6) moved = true
     look.tx = Math.max(-1, Math.min(1, (p.x / W) * 2 - 1))
     look.ty = Math.max(-1, Math.min(1, -((p.y / H) * 2 - 1)))
   }
@@ -76,9 +68,7 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
     if (captured && !moved && model) {
       const p = localPoint(e)
       const area = model.hitTest(p.x, p.y)
-      if (area) {
-        onTap({ x: p.x, y: p.y, hit: { area: String(area).toLowerCase(), model: wrapper() } })
-      }
+      if (area) onTap({ x: p.x, y: p.y, hit: { area: String(area).toLowerCase(), model: wrapper() } })
     }
     captured = false
   }
@@ -86,38 +76,37 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
   canvas.addEventListener('pointerdown', onDown, { passive: true })
   canvas.addEventListener('pointermove', onMove, { passive: true })
   canvas.addEventListener('pointerup', onUp, { passive: true })
-  canvas.addEventListener('pointerleave', () => {
-    look.tx = 0
-    look.ty = 0
-  })
+  canvas.addEventListener('pointerleave', () => { look.tx = 0; look.ty = 0 })
 
-  /* ---- wrapper exposing the pet API -------------------------- */
+  function expression(name) {
+    if (!model) return
+    const n = String(name || 'f01').toLowerCase()
+    try { model.expression(n) } catch {}
+  }
+
+  function randomMotion(group, priority = 3) {
+    if (!model) return
+    const g = String(group || '').toLowerCase()
+    const count = model.internalModel.motionManager.definitions?.[g]?.length || 0
+    if (count) model.motion(g, Math.floor(Math.random() * count), priority)
+  }
+
   const wrapper = () => ({
     isCubism2: true,
+    setExpression: expression,
     setRandomExpression() {
-      const n = 1 + Math.floor(Math.random() * 4)
-      model?.expression(`f0${n}`)
+      expression(`f0${1 + Math.floor(Math.random() * 4)}`)
     },
-    startRandomMotion(group, priority) {
-      const g = String(group).toLowerCase()
-      const count = model?.internalModel.motionManager.definitions?.[g]?.length || 0
-      if (count) model.motion(g, Math.floor(Math.random() * count), priority || 3)
-    },
+    startRandomMotion: randomMotion,
     startMotion(group, no, priority) {
       model?.motion(String(group).toLowerCase(), no, priority || 3)
     },
-    hitTest(x, y) {
-      return model ? model.hitTest(x, y) : false
-    },
-    getModel() {
-      return model
-    },
+    hitTest(x, y) { return model ? model.hitTest(x, y) : false },
+    getModel() { return model },
   })
 
-  /* ---- idle driver ------------------------------------------- */
   app.ticker.add(() => {
     if (!model) return
-    // smooth look-at
     look.x += (look.tx - look.x) * 0.12
     look.y += (look.ty - look.y) * 0.12
     if (!captured) {
@@ -127,7 +116,6 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
       setParam('PARAM_EYE_BALL_X', look.x)
       setParam('PARAM_EYE_BALL_Y', look.y)
     }
-    // random idle when nothing playing
     const mm = model.internalModel.motionManager
     if (mm.isFinished() && Date.now() > nextIdleAt) {
       const defs = mm.definitions.idle || []
@@ -138,21 +126,14 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
     }
   })
 
-  /* ---- public API -------------------------------------------- */
   return {
     async loadModel(dir, fileName) {
-      if (model) {
-        model.destroy()
-        model = null
-      }
+      if (model) { model.destroy(); model = null }
       const url = `${dir}${fileName}`
       model = await Live2DModel.from(url, { autoInteract: false })
-      model.autoUpdate = true // subscribe to Ticker.shared for updates
+      model.autoUpdate = true
       app.stage.addChild(model)
 
-      // Ground-truth fit: compute the model's vertex AABB from the runtime
-      // itself (getTransformedPoints) and fit the WHOLE figure, so nothing
-      // is ever cut off, regardless of the canvas's empty margins.
       function computeAABB() {
         const core = model.internalModel.coreModel
         const count = core._$5S?._$aS?.length || 0
@@ -161,8 +142,7 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
           const pts = core.getTransformedPoints(i)
           if (!pts) continue
           for (let k = 0; k + 1 < pts.length; k += 2) {
-            const x = pts[k]
-            const y = pts[k + 1]
+            const x = pts[k], y = pts[k + 1]
             if (x < minX) minX = x
             if (x > maxX) maxX = x
             if (y < minY) minY = y
@@ -172,17 +152,13 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
         return { minX, maxX, minY, maxY, w: maxX - minX, h: maxY - minY }
       }
 
-      // Compute AABB after the first real ticker update (default pose,
-      // before idle motions kick in at ~2s).
       setTimeout(() => {
         const b = computeAABB()
         if (isFinite(b.w) && b.w > 0) {
           aabbData = { w: b.w, h: b.h, cx: (b.minX + b.maxX) / 2, cy: (b.minY + b.maxY) / 2 }
           refit()
-          console.log('[ama-pet] cubism2 AABB:', JSON.stringify(b),
-            'scale=', +model.scale.x.toFixed(3), 'pos=', [+model.x.toFixed(1), +model.y.toFixed(1)])
+          console.log('[ama-pet] cubism2 AABB:', JSON.stringify(b), 'scale=', +model.scale.x.toFixed(3), 'pos=', [+model.x.toFixed(1), +model.y.toFixed(1)])
         } else {
-          console.log('[ama-pet] cubism2 AABB unavailable:', JSON.stringify(b))
           model.anchor.set(0.5, 0.5)
           const s = Math.min((W * 0.96) / model.width, (H * 0.96) / model.height)
           model.scale.set(s)
@@ -192,26 +168,22 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
       }, 400)
 
       console.log('[ama-pet] cubism2 model loaded:', fileName, 'size=', model.width, 'x', model.height)
-      // debug: rendering health
-      setTimeout(() => {
-        console.log('[ama-pet] cubism2 health:', JSON.stringify({
-          renderer: app.renderer.type,
-          sharedStarted: PIXI.Ticker.shared.started,
-          appTickerStarted: app.ticker.started,
-          modelVisible: model.visible,
-          stageChildren: app.stage.children.length,
-        }))
-      }, 3000)
+      setTimeout(() => console.log('[ama-pet] cubism2 health:', JSON.stringify({
+        renderer: app.renderer.type,
+        sharedStarted: PIXI.Ticker.shared.started,
+        appTickerStarted: app.ticker.started,
+        modelVisible: model.visible,
+        stageChildren: app.stage.children.length,
+      })), 3000)
       onLoaded(model)
       nextIdleAt = Date.now() + 2000
       return model
     },
-    setMouthOpen(v) {
-      setParam('PARAM_MOUTH_OPEN_Y', Math.max(0, Math.min(1, v)))
-    },
-    /* Fluid-layout support: the PIXI backing store follows the window size
-       (the canvas element fills the stage), and the model refits its AABB
-       into the new box — the model itself never distorts. */
+    setMouthOpen(v) { setParam('PARAM_MOUTH_OPEN_Y', Math.max(0, Math.min(1, v))) },
+    setExpression: expression,
+    setRandomExpression() { expression(`f0${1 + Math.floor(Math.random() * 4)}`) },
+    startRandomMotion: randomMotion,
+    startMotion(group, no, priority) { model?.motion(String(group).toLowerCase(), no, priority || 3) },
     resize(w, h) {
       W = Math.round(Number(w) || 480)
       H = Math.round(Number(h) || 640)
