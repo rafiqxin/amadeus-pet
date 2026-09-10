@@ -19,10 +19,22 @@ function Invoke-Python([string[]]$Args) {
   if ($LASTEXITCODE -ne 0) { throw "Python command failed: $Python $($Args -join ' ')" }
 }
 
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'git is required' }
-if (-not (Test-Path (Join-Path $Gsv '.git'))) {
+# Accept either a Git clone or a browser-downloaded/extracted GPT-SoVITS tree.
+# The latter is important on networks where git/github.com:443 is reset but a
+# browser download still works.
+$Installer = Join-Path $Gsv 'install.ps1'
+if (-not (Test-Path $Installer)) {
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw "GPT-SoVITS is missing and git is unavailable. Download the GPT-SoVITS main ZIP in a browser and extract it so this file exists: $Installer"
+  }
   git clone --depth 1 https://github.com/RVC-Boss/GPT-SoVITS.git $Gsv
-  if ($LASTEXITCODE -ne 0) { throw 'Failed to clone GPT-SoVITS' }
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to clone GPT-SoVITS. Your network may block github.com:443. Download https://github.com/RVC-Boss/GPT-SoVITS/archive/refs/heads/main.zip in a browser, extract its contents into '$Gsv', then run this script again."
+  }
+}
+
+if (-not (Test-Path $Installer)) {
+  throw "GPT-SoVITS tree is incomplete: install.ps1 not found at $Installer"
 }
 
 if ($Install) {
