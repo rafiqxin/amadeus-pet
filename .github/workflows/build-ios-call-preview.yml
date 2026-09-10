@@ -43,8 +43,38 @@ jobs:
           p.write_text(s.replace(needle, inject))
           PY
 
+      - name: Bundle 45 original Amadeus voice clips
+        shell: bash
+        run: |
+          set -euo pipefail
+          dst="public/Resources/amadeus-voices"
+          mkdir -p "$dst"
+          files=(
+            hello daga_kotowaru devilish_pervert i_guess nice pervert_confirmed sorry sounds_tough this_guy_hopeless
+            christina gah dont_add_tina why_christina who_the_hell_christina ask_me_whatever could_i_help what_do_you_want
+            what_is_it heheh huh_why_say you_sure nice_to_meet_okabe look_forward_to_working senpai_question senpai_questionmark
+            senpai_what_we_talkin senpai_who_is_this senpai_please_dont_tell still_not_happy dont_call_me_like_that tm_nonsense
+            tm_scientist_no_evidence tm_we_dont_know tm_you_said humans_software memory_complex secret_diary
+            modifying_memories_impossible memories_christina gah_extended should_christina ok tm_not_possible pleased_to_meet_you
+            pervert_idot_wanttodie
+          )
+          base="https://raw.githubusercontent.com/rafiqxin/Amadeus/master/app/src/main/res/raw"
+          for f in "${files[@]}"; do
+            curl -L --fail --retry 3 "$base/$f.ogg" -o "$dst/$f.ogg"
+            test -s "$dst/$f.ogg"
+          done
+          count=$(find "$dst" -name '*.ogg' -type f | wc -l | tr -d ' ')
+          test "$count" = "45"
+          echo "Bundled $count Amadeus reference voice clips"
+
       - name: Build renderer
         run: npm run build:render
+
+      - name: Verify voice clips reached renderer bundle
+        run: |
+          count=$(find dist/Resources/amadeus-voices -name '*.ogg' -type f | wc -l | tr -d ' ')
+          test "$count" = "45"
+          echo "Verified $count voice clips in dist"
 
       - name: Create Capacitor iOS shell
         run: |
@@ -125,12 +155,12 @@ jobs:
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
           cd build
-          zip -qry AMA-DEUS-Mobile-Native-STT-Preview-unsigned.ipa Payload
-          shasum -a 256 AMA-DEUS-Mobile-Native-STT-Preview-unsigned.ipa
+          zip -qry AMA-DEUS-Mobile-Native-STT-Reference-Voice-Preview-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-Mobile-Native-STT-Reference-Voice-Preview-unsigned.ipa
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Mobile-Native-STT-Preview-unsigned-IPA
-          path: build/AMA-DEUS-Mobile-Native-STT-Preview-unsigned.ipa
+          name: AMA-DEUS-Mobile-Native-STT-Reference-Voice-Preview-unsigned-IPA
+          path: build/AMA-DEUS-Mobile-Native-STT-Reference-Voice-Preview-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
