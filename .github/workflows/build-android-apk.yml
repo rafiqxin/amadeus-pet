@@ -43,6 +43,16 @@ jobs:
       - name: Adapt renderer for Android mobile and touch reactions
         run: python3 scripts/adapt-android-mobile.py
 
+      - name: Verify mobile touch delivery patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'interactions.setConsoleOpen(open && !isMobile)' src/main.js
+          grep -Fq 'mobileAreaFromPoint' src/main.js
+          grep -Fq 'touch-action: none !important' src/ui/mobile.css
+          grep -Fq 'pointer-events: auto !important' src/ui/mobile.css
+          echo 'Mobile CALL touch delivery fallback is active.'
+
       - name: Open mobile CALL route
         run: |
           python3 - <<'PY'
@@ -146,28 +156,28 @@ jobs:
 
       - name: Package APK
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk
-          sha256sum AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk.sha256
+          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk
+          sha256sum AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Android-v0.1.0-alpha.3-debug-APK
+          name: AMA-DEUS-Android-v0.1.0-alpha.4-debug-APK
           path: |
-            AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk
-            AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk.sha256
+            AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk
+            AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish Android prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.3]')
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.4]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "android-v0.1.0-alpha.3" \
-            "AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk#AMA-DEUS Android v0.1.0 alpha 3 APK" \
-            "AMA-DEUS-Android-v0.1.0-alpha.3-debug.apk.sha256#SHA-256 checksum" \
+          gh release create "android-v0.1.0-alpha.4" \
+            "AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk#AMA-DEUS Android v0.1.0 alpha 4 APK" \
+            "AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk.sha256#SHA-256 checksum" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS Android v0.1.0 alpha 3 · Touch Reaction" \
-            --notes "Touch Reaction preview for Android/LineageOS. Tapping Kurisu now selects a deterministic local reaction, starts a real Cubism 2 motion (flick_head, pinch_in, tap_body or shake), sets the matching expression, and plays the bundled reference OGG directly by file id with audio-driven lip sync. Repeated body pokes escalate into annoyed reactions. This path is fully local and does not require SpeechRecognition, DeepSeek or network access. Also fixes invalid flickhead/pinchin motion group names." \
+            --title "AMA-DEUS Android v0.1.0 alpha 4 · Mobile Touch Fix" \
+            --notes "Fixes Android/LineageOS character taps in CALL mode. Mobile presentation uses console-open, but desktop interaction logic previously treated that as a reason to disable stage taps. Mobile now keeps stage interaction enabled, applies touch-action:none/pointer-events:auto to the Live2D surface, and falls back to screen-position head/mouth/body zones when Cubism hitTest misses. Each accepted tap still drives a deterministic local motion + bundled OGG + lip sync without network dependency." \
             --prerelease
