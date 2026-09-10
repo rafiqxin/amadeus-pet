@@ -1,4 +1,4 @@
-name: Build iOS CALL preview IPA
+name: Build and release AMA-DEUS iOS
 
 on:
   push:
@@ -11,6 +11,9 @@ on:
       - 'package.json'
       - 'vite.config.js'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-ipa:
@@ -27,9 +30,9 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci
-          npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7 @capacitor-community/speech-recognition@7.0.1
+          npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7
 
-      - name: Force CALL preview route
+      - name: Open mobile CALL route
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -42,7 +45,7 @@ jobs:
           p.write_text(s.replace(needle, inject))
           PY
 
-      - name: Bundle 45 original Amadeus voice clips
+      - name: Bundle 45 Amadeus reference voice clips
         shell: bash
         run: |
           set -euo pipefail
@@ -69,7 +72,7 @@ jobs:
       - name: Build renderer
         run: npm run build:render
 
-      - name: Verify voice clips reached renderer bundle
+      - name: Verify voice bundle
         run: |
           count=$(find dist/Resources/amadeus-voices -name '*.ogg' -type f | wc -l | tr -d ' ')
           test "$count" = "45"
@@ -79,8 +82,8 @@ jobs:
         run: |
           cat > capacitor.config.json <<'JSON'
           {
-            "appId": "com.rafiqxin.amadeus.callpreview",
-            "appName": "AMA-DEUS CALL Preview",
+            "appId": "com.rafiqxin.amadeus",
+            "appName": "AMA-DEUS",
             "webDir": "dist",
             "bundledWebRuntime": false
           }
@@ -88,7 +91,7 @@ jobs:
           npx cap add ios
           npx cap sync ios
 
-      - name: Use original Amadeus launcher icon
+      - name: Use Amadeus launcher icon
         run: |
           ICON_SRC="$RUNNER_TEMP/amadeus-launcher.png"
           ICON_DST="ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"
@@ -97,16 +100,13 @@ jobs:
             -o "$ICON_SRC"
           sips -z 1024 1024 "$ICON_SRC" --out "$ICON_DST" >/dev/null
           test -s "$ICON_DST"
-          echo "Installed original Amadeus launcher artwork as iOS AppIcon"
 
-      - name: Configure full-screen preview
+      - name: Configure full-screen app
         run: |
           PLIST="ios/App/App/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :UIStatusBarHidden bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIStatusBarHidden true" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :UIViewControllerBasedStatusBarAppearance bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIViewControllerBasedStatusBarAppearance false" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :NSSpeechRecognitionUsageDescription string '用于将你的语音转换为文字并发送给 Amadeus。'" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSSpeechRecognitionUsageDescription '用于将你的语音转换为文字并发送给 Amadeus。'" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string '用于语音聊天时采集你的声音。'" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription '用于语音聊天时采集你的声音。'" "$PLIST"
 
       - name: Build unsigned device app
         run: |
@@ -129,12 +129,27 @@ jobs:
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
           cd build
-          zip -qry AMA-DEUS-Mobile-Reference-Voice-Preview-unsigned.ipa Payload
-          shasum -a 256 AMA-DEUS-Mobile-Reference-Voice-Preview-unsigned.ipa
+          zip -qry AMA-DEUS-iOS-v0.1.0-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-iOS-v0.1.0-unsigned.ipa
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Mobile-Reference-Voice-Preview-unsigned-IPA
-          path: build/AMA-DEUS-Mobile-Reference-Voice-Preview-unsigned.ipa
+          name: AMA-DEUS-iOS-v0.1.0-unsigned-IPA
+          path: build/AMA-DEUS-iOS-v0.1.0-unsigned.ipa
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="ios-v0.1.0"
+          FILE="build/AMA-DEUS-iOS-v0.1.0-unsigned.ipa"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE" --clobber
+          else
+            gh release create "$TAG" "$FILE" \
+              --target "$GITHUB_SHA" \
+              --title "AMA-DEUS iOS v0.1.0" \
+              --notes "First stable iOS baseline: Amadeus mobile CALL UI, configurable LLM API, Live2D reaction control, 45 reference OGG reactions, and audio-driven lip sync. iOS speech input is intentionally disabled; speech input moves to the Android track. The IPA is unsigned and requires user-side signing for installation."
+          fi
