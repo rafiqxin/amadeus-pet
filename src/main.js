@@ -271,10 +271,9 @@ async function boot() {
     },
   })
 
-  /* ---- console open → the SAME original drag on the frame ----
-     Per-event screen deltas, applied immediately — identical to the model
-     drag. Interactive controls (buttons/inputs/logs/header/footer) are
-     excluded so they keep working normally. */
+  /* ---- console open → drag the frame -------------------------
+     The renderer owns the gesture; Electron main process owns all window
+     coordinates so Windows DPI scaling cannot distort the bounds. */
   {
     const consoleEl = hud.el.querySelector('.hud-console')
     let cDrag = false
@@ -288,16 +287,19 @@ async function boot() {
       cDrag = true
       cLastX = e.screenX
       cLastY = e.screenY
+      ipc?.dragStart()
     })
     consoleEl.addEventListener('pointermove', (e) => {
       if (!cDrag) return
-      const dx = e.screenX - cLastX
-      const dy = e.screenY - cLastY
-      if (dx !== 0 || dy !== 0) ipc?.dragMove(dx, dy)
+      if (e.screenX !== cLastX || e.screenY !== cLastY) ipc?.dragMove()
       cLastX = e.screenX
       cLastY = e.screenY
     })
-    const cEnd = () => { cDrag = false }
+    const cEnd = () => {
+      if (!cDrag) return
+      cDrag = false
+      ipc?.dragEnd()
+    }
     consoleEl.addEventListener('pointerup', cEnd)
     consoleEl.addEventListener('pointercancel', cEnd)
   }
