@@ -33,7 +33,7 @@ jobs:
         run: |
           mkdir -p preview
           set +e
-          timeout 28s xvfb-run -a env             AMA_HASH=call             AMA_CAPTURE="$PWD/preview/call-calibrated.png"             AMA_CAPTURE_DELAY=18500             ./node_modules/.bin/electron . --no-sandbox
+          timeout 50s xvfb-run -a env             AMA_HASH=call             AMA_CAPTURE="$PWD/preview/call-calibrated.png"             AMA_CAPTURE_DELAY=18500             ./node_modules/.bin/electron . --no-sandbox
           code=$?
           set -e
           # Electron is expected to be terminated by timeout after capture.
