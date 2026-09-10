@@ -4,7 +4,7 @@ const DEFAULTS = {
   scale: 0.92,       // pet render scale (applied to stage transform)
   idleChat: true,    // occasional idle chatter bubbles
   opacity: 1.0,
-  voice: true,       // speak lines via Web Speech API when a voice exists
+  voice: false,      // TTS stays off until a deliberate voice provider is configured
 }
 
 const KEY = 'amadeus-pet-settings-v1'
