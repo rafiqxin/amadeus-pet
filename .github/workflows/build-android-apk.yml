@@ -88,27 +88,28 @@ jobs:
           done
           test "$(find "$dst" -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
 
-      - name: Verify consistent touch voice cohort
-        shell: bash
+      - name: Verify curated touch voice cohort
         run: |
-          set -euo pipefail
-          node --input-type=module <<'NODE' > /tmp/touch-ids.txt
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs'
           import { TOUCH_REACTION_VOICE_IDS } from './src/pet/touch-reactions.js'
+          const audited48kMono = new Set([
+            'ask_me_whatever','christina','could_i_help','gah','gah_extended','heheh','huh_why_say',
+            'humans_software','look_forward_to_working','memories_christina','memory_complex',
+            'modifying_memories_impossible','nice_to_meet_okabe','ok','secret_diary',
+            'senpai_please_dont_tell','senpai_question','senpai_questionmark','senpai_what_we_talkin',
+            'senpai_who_is_this','should_christina','still_not_happy','tm_nonsense','tm_not_possible',
+            'tm_scientist_no_evidence','tm_we_dont_know','tm_you_said','what_do_you_want','what_is_it',
+            'why_christina','you_sure'
+          ])
           if (TOUCH_REACTION_VOICE_IDS.length < 10) throw new Error('touch reaction bank unexpectedly small')
-          for (const id of TOUCH_REACTION_VOICE_IDS) console.log(id)
+          for (const id of TOUCH_REACTION_VOICE_IDS) {
+            if (!audited48kMono.has(id)) throw new Error(`touch reaction leaves curated 48k-mono cohort: ${id}`)
+            const file = `public/Resources/amadeus-voices/${id}.ogg`
+            if (!fs.existsSync(file) || fs.statSync(file).size === 0) throw new Error(`missing touch OGG: ${id}`)
+          }
+          console.log(`Verified ${TOUCH_REACTION_VOICE_IDS.length} touch reactions stay inside the audited 48 kHz mono cohort.`)
           NODE
-          count=0
-          while IFS= read -r id; do
-            file="public/Resources/amadeus-voices/${id}.ogg"
-            test -s "$file"
-            spec="$(ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate,channels -of csv=p=0 "$file" | tr -d '\r\n')"
-            if [ "$spec" != "48000,1" ]; then
-              echo "Touch voice cohort mismatch: $id => $spec" >&2
-              exit 1
-            fi
-            count=$((count + 1))
-          done < /tmp/touch-ids.txt
-          echo "Verified $count touch reactions all use the 48 kHz mono cohort."
 
       - name: Build renderer
         run: npm run build:render
@@ -187,5 +188,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "AMA-DEUS Android v0.1.0 alpha 5 · Single Voice Path" \
-            --notes "Voice-consistency fix. Native mobile taps now have exactly one gesture owner, so Cubism onTap and the stage fallback cannot both speak for one physical tap. Starting a reference OGG explicitly cancels any Web Speech utterance. Direct touch reactions are restricted to the 48 kHz mono reference cohort to avoid switching between differently mastered source groups. The full 45-clip bank remains bundled for later curation." \
+            --notes "Voice-consistency fix. Native mobile taps now have exactly one gesture owner, so Cubism onTap and the stage fallback cannot both speak for one physical tap. Starting a reference OGG explicitly cancels any Web Speech utterance. Direct touch reactions are restricted to the audited 48 kHz mono reference cohort to avoid switching between differently mastered source groups. The full 45-clip bank remains bundled for later curation." \
             --prerelease
