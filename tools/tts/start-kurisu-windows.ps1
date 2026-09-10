@@ -20,8 +20,6 @@ function Invoke-Python([string[]]$Args) {
 }
 
 # Accept either a Git clone or a browser-downloaded/extracted GPT-SoVITS tree.
-# The latter is important on networks where git/github.com:443 is reset but a
-# browser download still works.
 $Installer = Join-Path $Gsv 'install.ps1'
 if (-not (Test-Path $Installer)) {
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -29,19 +27,31 @@ if (-not (Test-Path $Installer)) {
   }
   git clone --depth 1 https://github.com/RVC-Boss/GPT-SoVITS.git $Gsv
   if ($LASTEXITCODE -ne 0) {
-    throw "Failed to clone GPT-SoVITS. Your network may block github.com:443. Download https://github.com/RVC-Boss/GPT-SoVITS/archive/refs/heads/main.zip in a browser, extract its contents into '$Gsv', then run this script again."
+    throw "Failed to clone GPT-SoVITS. Download the GPT-SoVITS main ZIP in a browser, extract it into '$Gsv', then run this script again."
+  }
+}
+if (-not (Test-Path $Installer)) { throw "GPT-SoVITS tree is incomplete: install.ps1 not found at $Installer" }
+
+function Repair-GptSoVitsCondaInstaller {
+  param([string]$Path)
+  $text = Get-Content $Path -Raw
+  $needle = '$output = & conda install -y -q -c conda-forge @Args 2>&1'
+  if ($text.Contains($needle)) {
+    # In an activated Conda PowerShell session, `conda` can be a shell function.
+    # GPT-SoVITS also defines Invoke-Conda in install.ps1; on older Conda/Windows
+    # PowerShell combinations this name collision can recurse until the PowerShell
+    # call-depth limit is hit. Invoke the real CONDA_EXE instead of the shell wrapper.
+    $replacement = '$CondaExe = if ($env:CONDA_EXE -and (Test-Path $env:CONDA_EXE)) { $env:CONDA_EXE } else { (Get-Command conda.exe -ErrorAction Stop).Source }' + "`r`n    " + '$output = & $CondaExe install -y -q -c conda-forge @Args 2>&1'
+    $text = $text.Replace($needle, $replacement)
+    Set-Content -Path $Path -Value $text -Encoding UTF8
+    Write-Host 'Patched GPT-SoVITS install.ps1 to invoke CONDA_EXE directly (prevents PowerShell recursion).'
   }
 }
 
-if (-not (Test-Path $Installer)) {
-  throw "GPT-SoVITS tree is incomplete: install.ps1 not found at $Installer"
-}
-
 if ($Install) {
+  Repair-GptSoVitsCondaInstaller -Path $Installer
   Push-Location $Gsv
   try {
-    # Use the current PowerShell host so Windows PowerShell 5.1 also works.
-    # GPT-SoVITS install.ps1 uses normal PowerShell parameters: -Device / -Source.
     & .\install.ps1 -Device $Device -Source $Source
     if ($LASTEXITCODE -ne 0) { throw 'GPT-SoVITS install.ps1 failed' }
   } finally { Pop-Location }
@@ -66,9 +76,7 @@ $GptWeight = Get-ChildItem $Model -Filter *.ckpt | Select-Object -First 1
 $SovitsWeight = Get-ChildItem $Model -Filter *.pth | Select-Object -First 1
 $Ref = if ($env:KURISU_REF_AUDIO) { $env:KURISU_REF_AUDIO } else { Join-Path $Model '无奈.wav' }
 $RefShy = if ($env:KURISU_REF_SHY) { $env:KURISU_REF_SHY } else { Join-Path $Model '害羞示范.wav' }
-if (-not $GptWeight -or -not $SovitsWeight -or -not (Test-Path $Ref)) {
-  throw 'Kurisu GPT/SoVITS weight or reference WAV is missing'
-}
+if (-not $GptWeight -or -not $SovitsWeight -or -not (Test-Path $Ref)) { throw 'Kurisu GPT/SoVITS weight or reference WAV is missing' }
 
 $Pretrained = Join-Path $Gsv 'GPT_SoVITS\pretrained_models'
 $Bert = Join-Path $Pretrained 'chinese-roberta-wwm-ext-large'
