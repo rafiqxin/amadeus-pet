@@ -1,0 +1,65 @@
+name: Preview Amadeus UI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - chatgpt/amadeus-reference-ui
+    paths:
+      - '.github/workflows/preview-ui.yml'
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer
+        run: npm run build:render
+
+      - name: Capture boot screen
+        shell: bash
+        run: |
+          mkdir -p preview
+          set +e
+          timeout 12s xvfb-run -a env             AMA_CAPTURE="$PWD/preview/boot.png"             AMA_CAPTURE_DELAY=2500             npm run app
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi
+          test -s preview/boot.png
+
+      - name: Capture main screen
+        shell: bash
+        run: |
+          set +e
+          timeout 24s xvfb-run -a env             AMA_CAPTURE="$PWD/preview/main.png"             AMA_CAPTURE_DELAY=18500             npm run app
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi
+          test -s preview/main.png
+
+      - name: Capture CALL view
+        shell: bash
+        run: |
+          set +e
+          timeout 24s xvfb-run -a env             AMA_HASH=call             AMA_CAPTURE="$PWD/preview/call.png"             AMA_CAPTURE_DELAY=18500             npm run app
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then exit "$code"; fi
+          test -s preview/call.png
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: amadeus-ui-preview
+          path: preview/*.png
+          if-no-files-found: error
