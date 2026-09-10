@@ -58,6 +58,17 @@ jobs:
           npx cap add ios
           npx cap sync ios
 
+      - name: Use original Amadeus launcher icon
+        run: |
+          ICON_SRC="$RUNNER_TEMP/amadeus-launcher.png"
+          ICON_DST="ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"
+          curl -L --fail \
+            https://raw.githubusercontent.com/rafiqxin/Amadeus/master/app/src/main/ic_launcher-web.png \
+            -o "$ICON_SRC"
+          sips -z 1024 1024 "$ICON_SRC" --out "$ICON_DST" >/dev/null
+          test -s "$ICON_DST"
+          echo "Installed original Amadeus launcher artwork as iOS AppIcon"
+
       - name: Configure full-screen preview
         run: |
           PLIST="ios/App/App/Info.plist"
