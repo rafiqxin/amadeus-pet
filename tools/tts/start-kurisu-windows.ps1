@@ -32,24 +32,46 @@ if (-not (Test-Path $Installer)) {
 }
 if (-not (Test-Path $Installer)) { throw "GPT-SoVITS tree is incomplete: install.ps1 not found at $Installer" }
 
-function Repair-GptSoVitsCondaInstaller {
+function Repair-GptSoVitsInstaller {
   param([string]$Path)
   $text = Get-Content $Path -Raw
-  $needle = '$output = & conda install -y -q -c conda-forge @Args 2>&1'
-  if ($text.Contains($needle)) {
+  $changed = $false
+
+  $condaNeedle = '$output = & conda install -y -q -c conda-forge @Args 2>&1'
+  if ($text.Contains($condaNeedle)) {
     # In an activated Conda PowerShell session, `conda` can be a shell function.
-    # GPT-SoVITS also defines Invoke-Conda in install.ps1; on older Conda/Windows
-    # PowerShell combinations this name collision can recurse until the PowerShell
-    # call-depth limit is hit. Invoke the real CONDA_EXE instead of the shell wrapper.
-    $replacement = '$CondaExe = if ($env:CONDA_EXE -and (Test-Path $env:CONDA_EXE)) { $env:CONDA_EXE } else { (Get-Command conda.exe -ErrorAction Stop).Source }' + "`r`n    " + '$output = & $CondaExe install -y -q -c conda-forge @Args 2>&1'
-    $text = $text.Replace($needle, $replacement)
-    Set-Content -Path $Path -Value $text -Encoding UTF8
-    Write-Host 'Patched GPT-SoVITS install.ps1 to invoke CONDA_EXE directly (prevents PowerShell recursion).'
+    # GPT-SoVITS also defines Invoke-Conda; on older Conda/Windows PowerShell
+    # combinations this can recurse until the PowerShell call-depth limit is hit.
+    $condaReplacement = '$CondaExe = if ($env:CONDA_EXE -and (Test-Path $env:CONDA_EXE)) { $env:CONDA_EXE } else { (Get-Command conda.exe -ErrorAction Stop).Source }' + "`r`n    " + '$output = & $CondaExe install -y -q -c conda-forge @Args 2>&1'
+    $text = $text.Replace($condaNeedle, $condaReplacement)
+    $changed = $true
+    Write-Host 'Patched GPT-SoVITS install.ps1 to invoke CONDA_EXE directly.'
   }
+
+  $downloadNeedle = '$null = Invoke-WebRequest @params -ErrorAction Stop'
+  if ($text.Contains($downloadNeedle)) {
+    # Windows PowerShell 5.1 does not reliably follow the 308 redirects returned
+    # by hf-mirror.com. Windows 11 ships curl.exe, whose -L handles 301/302/307/308.
+    $downloadReplacement = @'
+if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) { throw 'curl.exe is required for redirected model downloads' }
+        if ($OutFile) {
+            & curl.exe -L --fail --retry 3 --retry-delay 2 --connect-timeout 20 --output $OutFile $Uri
+            if ($LASTEXITCODE -ne 0) { throw "curl.exe download failed with exit code $LASTEXITCODE" }
+        } else {
+            & curl.exe -L --fail --retry 3 --retry-delay 2 --connect-timeout 20 $Uri | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "curl.exe download failed with exit code $LASTEXITCODE" }
+        }
+'@
+    $text = $text.Replace($downloadNeedle, $downloadReplacement.Trim())
+    $changed = $true
+    Write-Host 'Patched GPT-SoVITS install.ps1 downloads to curl.exe -L (handles HTTP 308 redirects).'
+  }
+
+  if ($changed) { Set-Content -Path $Path -Value $text -Encoding UTF8 }
 }
 
 if ($Install) {
-  Repair-GptSoVitsCondaInstaller -Path $Installer
+  Repair-GptSoVitsInstaller -Path $Installer
   Push-Location $Gsv
   try {
     & .\install.ps1 -Device $Device -Source $Source
