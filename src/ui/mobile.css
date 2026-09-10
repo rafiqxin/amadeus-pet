@@ -7,6 +7,14 @@ body.mobile-ios {
 }
 
 body.mobile-ios .mobile-ui {
+  display: none;
+
+}
+
+/* Mobile controls belong to the connected CALL surface only.  Keeping them
+   unmounted visually during the boot/connect screen prevents the floating
+   dock from covering CONNECT/CANCEL. */
+body.mobile-ios.console-open.call-mode .mobile-ui {
   display: block;
   position: fixed;
   inset: 0;
@@ -256,4 +264,31 @@ body.mobile-ios.console-open.call-mode .hud-call::after {
     transform: none;
     flex-direction: column;
   }
+}
+
+
+/* iPhone safe-area / Dynamic Island
+   WKWebView can extend under the sensor housing, so all top-owned Amadeus
+   chrome is inset by env(safe-area-inset-top). */
+body.mobile-ios.console-open.call-mode .phone-bar {
+  top: 0;
+  height: calc(34px + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+  box-sizing: border-box;
+}
+
+/* Keep the character/background composition below the status/sensor zone.
+   The background still fills edge-to-edge; only interactive/character
+   content gets a protected top inset. */
+body.mobile-ios.console-open.call-mode #l2d-canvas,
+body.mobile-ios.console-open.call-mode #l2d-canvas2 {
+  top: env(safe-area-inset-top) !important;
+  height: calc(100% - env(safe-area-inset-top)) !important;
+}
+
+body.mobile-ios .mobile-sheet {
+  padding-left: max(18px, env(safe-area-inset-left));
+  padding-right: max(18px, env(safe-area-inset-right));
 }
