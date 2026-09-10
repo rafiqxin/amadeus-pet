@@ -8,6 +8,13 @@ def replace_required(text: str, old: str, new: str, label: str, count: int = 1) 
     return text.replace(old, new, count)
 
 
+def replace_one_of(text: str, variants, new: str, label: str) -> str:
+    for old in variants:
+        if old in text:
+            return text.replace(old, new, 1)
+    raise SystemExit(f'{label} not found; tried: {variants!r}')
+
+
 main = Path('src/main.js')
 s = main.read_text()
 
@@ -135,8 +142,18 @@ v = replace_required(
     "const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent)\nconst isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)\nconst isNativeMobile = isIOS || isAndroid",
     'native mobile voice detection',
 )
-v = replace_required(v, 'if (isIOS) {', 'if (isNativeMobile) {', 'native OGG playback gate')
-v = replace_required(v, 'return isIOS || ready', 'return isNativeMobile || ready', 'native voice availability')
+v = replace_one_of(
+    v,
+    ['if (isIOS) {', 'if(isIOS){'],
+    'if(isNativeMobile){',
+    'native OGG playback gate',
+)
+v = replace_one_of(
+    v,
+    ['return isIOS || ready', 'return isIOS||ready'],
+    'return isNativeMobile||ready',
+    'native voice availability',
+)
 if 'export function playReferenceVoice(' not in v:
     v += """
 
