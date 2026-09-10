@@ -1,16 +1,7 @@
 /* Pet interactions: custom window dragging, click vs drag disambiguation.
-   NOTE: the window is ALWAYS interactive. The mouse-passthrough dance
-   (setIgnoreMouseEvents forward:true) proved unreliable for real mice on
-   Linux X11 — real events were swallowed at the OS level, making the pet
-   undraggable and its buttons unclickable. Desktop-pet standard (PPet etc.)
-   is a fully interactive window; the transparent margins just swallow
-   clicks.
-
-   DRAG MATH — restored to the original simple version that worked:
-   per-event screen deltas, applied immediately, no rAF batching, no
-   pointer capture, no calibration. The hit ellipse is expressed as
-   fractions of the stage so it stays centered on the model at any
-   window size. */
+   The renderer decides gesture ownership; Electron's main process computes
+   actual window coordinates from screen.getCursorScreenPoint() so Windows
+   DPI scaling cannot mix CSS pixels and BrowserWindow DIP coordinates. */
 
 const HIT = { fx: 0.5, fy: 0.5, frx: 0.354, fry: 0.445, hitScale: 1 }
 const DRAG_THRESHOLD = 5
@@ -36,12 +27,13 @@ export function mountInteractions(stage, hooks = {}) {
   }
 
   function onPointerDown(e) {
-    if (consoleOpen) return // the frame owns all dragging while the console is open
+    if (consoleOpen) return
     if (!inHitArea(e.clientX, e.clientY)) return
     dragging = true
     moved = false
     lastX = e.screenX
     lastY = e.screenY
+    ipc?.dragStart()
     onDragStart()
   }
 
@@ -51,22 +43,32 @@ export function mountInteractions(stage, hooks = {}) {
     const dy = e.screenY - lastY
     if (dx !== 0 || dy !== 0) {
       if (!moved && (Math.abs(dx) + Math.abs(dy)) > DRAG_THRESHOLD) moved = true
-      ipc.dragMove(dx, dy)
+      ipc.dragMove()
     }
     lastX = e.screenX
     lastY = e.screenY
   }
 
-  function onPointerUp(e) {
+  function endDrag(e, cancelled = false) {
     if (!dragging) return
     dragging = false
-    if (!moved && inHitArea(e.clientX, e.clientY)) onClick(e)
+    ipc?.dragEnd()
+    if (!cancelled && !moved && inHitArea(e.clientX, e.clientY)) onClick(e)
     onDragEnd()
+  }
+
+  function onPointerUp(e) {
+    endDrag(e, false)
+  }
+
+  function onPointerCancel(e) {
+    endDrag(e, true)
   }
 
   stage.addEventListener('pointerdown', onPointerDown)
   stage.addEventListener('pointermove', onPointerMove)
   stage.addEventListener('pointerup', onPointerUp)
+  stage.addEventListener('pointercancel', onPointerCancel)
 
   stage.addEventListener('dblclick', (e) => {
     if (inHitArea(e.clientX, e.clientY)) onDoubleClick()
@@ -75,6 +77,7 @@ export function mountInteractions(stage, hooks = {}) {
   return {
     setConsoleOpen(open) {
       consoleOpen = !!open
+      if (dragging) ipc?.dragEnd()
       dragging = false
     },
     setHitScale(v) {
@@ -84,6 +87,8 @@ export function mountInteractions(stage, hooks = {}) {
       stage.removeEventListener('pointerdown', onPointerDown)
       stage.removeEventListener('pointermove', onPointerMove)
       stage.removeEventListener('pointerup', onPointerUp)
+      stage.removeEventListener('pointercancel', onPointerCancel)
+      ipc?.dragEnd()
     },
   }
 }
