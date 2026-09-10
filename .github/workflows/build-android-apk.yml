@@ -43,15 +43,15 @@ jobs:
       - name: Adapt renderer for Android mobile and touch reactions
         run: python3 scripts/adapt-android-mobile.py
 
-      - name: Verify mobile touch delivery patches
+      - name: Verify single-owner mobile touch and exclusive OGG
         shell: bash
         run: |
           set -euo pipefail
           grep -Fq 'interactions.setConsoleOpen(open && !isMobile)' src/main.js
-          grep -Fq 'mobileAreaFromPoint' src/main.js
+          grep -Fq 'if (isMobile) return' src/main.js
+          grep -Fq 'window.speechSynthesis?.cancel()' src/pet/voice.js
           grep -Fq 'touch-action: none !important' src/ui/mobile.css
-          grep -Fq 'pointer-events: auto !important' src/ui/mobile.css
-          echo 'Mobile CALL touch delivery fallback is active.'
+          echo 'Native mobile uses one touch owner and OGG cancels competing Web Speech.'
 
       - name: Open mobile CALL route
         run: |
@@ -88,18 +88,27 @@ jobs:
           done
           test "$(find "$dst" -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
 
-      - name: Verify touch reaction OGG bank
+      - name: Verify consistent touch voice cohort
+        shell: bash
         run: |
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs'
+          set -euo pipefail
+          node --input-type=module <<'NODE' > /tmp/touch-ids.txt
           import { TOUCH_REACTION_VOICE_IDS } from './src/pet/touch-reactions.js'
           if (TOUCH_REACTION_VOICE_IDS.length < 10) throw new Error('touch reaction bank unexpectedly small')
-          for (const id of TOUCH_REACTION_VOICE_IDS) {
-            const file = `public/Resources/amadeus-voices/${id}.ogg`
-            if (!fs.existsSync(file) || fs.statSync(file).size === 0) throw new Error(`missing touch OGG: ${id}`)
-          }
-          console.log(`Verified ${TOUCH_REACTION_VOICE_IDS.length} deterministic touch OGG reactions`)
+          for (const id of TOUCH_REACTION_VOICE_IDS) console.log(id)
           NODE
+          count=0
+          while IFS= read -r id; do
+            file="public/Resources/amadeus-voices/${id}.ogg"
+            test -s "$file"
+            spec="$(ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate,channels -of csv=p=0 "$file" | tr -d '\r\n')"
+            if [ "$spec" != "48000,1" ]; then
+              echo "Touch voice cohort mismatch: $id => $spec" >&2
+              exit 1
+            fi
+            count=$((count + 1))
+          done < /tmp/touch-ids.txt
+          echo "Verified $count touch reactions all use the 48 kHz mono cohort."
 
       - name: Build renderer
         run: npm run build:render
@@ -108,7 +117,7 @@ jobs:
         run: |
           grep -R -q '__amaLastTouch' dist/assets
           test "$(find dist/Resources/amadeus-voices -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
-          echo "Touch -> motion -> direct OGG path is present in renderer bundle."
+          echo "Touch -> one mobile owner -> direct OGG path is present in renderer bundle."
 
       - name: Create Capacitor Android shell
         run: |
@@ -129,7 +138,6 @@ jobs:
           set -euo pipefail
           PLUGINS="android/app/src/main/assets/capacitor.plugins.json"
           test -f "$PLUGINS"
-          cat "$PLUGINS"
           grep -q 'SpeechRecognition' "$PLUGINS"
           grep -R -q 'capacitor-community-speech-recognition' android/capacitor.settings.gradle android/app/capacitor.build.gradle
           echo "SpeechRecognition native Android plugin is registered."
@@ -156,28 +164,28 @@ jobs:
 
       - name: Package APK
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk
-          sha256sum AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk.sha256
+          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk
+          sha256sum AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Android-v0.1.0-alpha.4-debug-APK
+          name: AMA-DEUS-Android-v0.1.0-alpha.5-debug-APK
           path: |
-            AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk
-            AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk.sha256
+            AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk
+            AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish Android prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.4]')
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.5]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "android-v0.1.0-alpha.4" \
-            "AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk#AMA-DEUS Android v0.1.0 alpha 4 APK" \
-            "AMA-DEUS-Android-v0.1.0-alpha.4-debug.apk.sha256#SHA-256 checksum" \
+          gh release create "android-v0.1.0-alpha.5" \
+            "AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk#AMA-DEUS Android v0.1.0 alpha 5 APK" \
+            "AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk.sha256#SHA-256 checksum" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS Android v0.1.0 alpha 4 · Mobile Touch Fix" \
-            --notes "Fixes Android/LineageOS character taps in CALL mode. Mobile presentation uses console-open, but desktop interaction logic previously treated that as a reason to disable stage taps. Mobile now keeps stage interaction enabled, applies touch-action:none/pointer-events:auto to the Live2D surface, and falls back to screen-position head/mouth/body zones when Cubism hitTest misses. Each accepted tap still drives a deterministic local motion + bundled OGG + lip sync without network dependency." \
+            --title "AMA-DEUS Android v0.1.0 alpha 5 · Single Voice Path" \
+            --notes "Voice-consistency fix. Native mobile taps now have exactly one gesture owner, so Cubism onTap and the stage fallback cannot both speak for one physical tap. Starting a reference OGG explicitly cancels any Web Speech utterance. Direct touch reactions are restricted to the 48 kHz mono reference cohort to avoid switching between differently mastered source groups. The full 45-clip bank remains bundled for later curation." \
             --prerelease
