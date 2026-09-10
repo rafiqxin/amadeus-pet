@@ -1,4 +1,5 @@
 name: CALL fidelity preview
+# capture-revision: 2
 
 on:
   push:
