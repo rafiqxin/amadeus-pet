@@ -62,18 +62,20 @@ export function buildVoiceClassifierMessages(replyText) {
     {
       role: 'system',
       content: [
-        'You are the AMA-DEUS reference-voice router.',
-        'You never listen to audio. The catalog below is the complete semantic metadata for the bundled OGG clips.',
-        'Choose a voice only when the assistant reply expresses substantially the SAME utterance/intent, not merely the same topic.',
+        'You are the AMA-DEUS reference-voice router and Japanese speech planner.',
+        'The user speaks Chinese and the visible assistant reply is normally Chinese. Kurisu TTS must ALWAYS receive natural Japanese.',
+        'You never listen to audio. The catalog below is the complete semantic metadata for the bundled original OGG clips.',
+        'Choose a catalog voice only when the assistant reply expresses substantially the SAME utterance/intent, not merely the same topic.',
         'If no clip is a close semantic substitute, choose NONE.',
+        'Also translate the complete assistant reply into natural spoken Japanese suitable for Makise Kurisu. Preserve meaning, tone, technical terms and sentence count as much as practical. Do not add information, role labels, quotes, ruby, stage directions or explanations.',
         'Return exactly one compact JSON object and nothing else:',
-        '{"id":"<catalog id or NONE>","confidence":0.0,"reason":"short reason"}',
+        '{"id":"<catalog id or NONE>","confidence":0.0,"reason":"short reason","tts_ja":"natural Japanese translation"}',
         'Use confidence >= 0.86 only for a genuinely close semantic substitute.',
         'Catalog:',
         voiceCatalogPromptLines().join('\n'),
       ].join('\n'),
     },
-    { role: 'user', content: `Assistant reply to route:\n${String(replyText || '')}` },
+    { role: 'user', content: `Chinese-visible assistant reply to route and translate:\n${String(replyText || '')}` },
   ]
 }
 
@@ -85,9 +87,11 @@ export function parseVoiceClassifierResponse(raw) {
     const parsed = JSON.parse(match[0])
     const id = String(parsed.id || '').trim()
     const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0))
-    if (id.toUpperCase() === 'NONE') return { id: null, confidence, source: 'llm', reason: String(parsed.reason || '') }
-    if (!getVoiceCatalogEntry(id)) return null
-    return { id, confidence, source: 'llm', reason: String(parsed.reason || '') }
+    const ttsJa = String(parsed.tts_ja || '').trim()
+    const base = { confidence, source: 'llm', reason: String(parsed.reason || ''), ttsJa }
+    if (id.toUpperCase() === 'NONE') return { id: null, ...base }
+    if (!getVoiceCatalogEntry(id)) return { id: null, ...base, reason: `invalid catalog id: ${id}` }
+    return { id, ...base }
   } catch { return null }
 }
 
@@ -95,5 +99,12 @@ export function finalizeVoiceRoute(text, llmDecision = null, { llmThreshold = 0.
   const local = localVoiceDecision(text, localThreshold)
   if (local) return { kind: 'ogg', ...local }
   if (llmDecision?.id && getVoiceCatalogEntry(llmDecision.id) && llmDecision.confidence >= llmThreshold) return { kind: 'ogg', ...llmDecision }
-  return { kind: 'tts', id: null, confidence: llmDecision?.confidence || 0, source: llmDecision ? 'llm-none' : 'no-classifier', reason: llmDecision?.reason || 'no close reference clip; synthesize the exact reply' }
+  return {
+    kind: 'tts',
+    id: null,
+    confidence: llmDecision?.confidence || 0,
+    source: llmDecision ? 'llm-none' : 'no-classifier',
+    reason: llmDecision?.reason || 'no close reference clip; synthesize the exact reply',
+    ttsJa: String(llmDecision?.ttsJa || '').trim(),
+  }
 }
