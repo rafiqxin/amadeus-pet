@@ -8,6 +8,7 @@ on:
       - '.github/workflows/build-android-apk.yml'
       - 'scripts/**'
       - 'src/**'
+      - 'models/kurisu/**'
       - 'index.html'
       - 'package.json'
       - 'vite.config.js'
@@ -39,6 +40,23 @@ jobs:
           npm install --save-exact @capacitor/core@7 @capacitor/android@7 @capacitor-community/speech-recognition@7.0.1
           npm install --save-dev --save-exact @capacitor/cli@7
           npm ls @capacitor/core @capacitor/android @capacitor-community/speech-recognition
+
+      - name: Verify Kurisu motions have no embedded sound
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('models/kurisu/kurisu.model.json')
+          data = json.loads(p.read_text())
+          offenders = []
+          for group, motions in data.get('motions', {}).items():
+              for i, motion in enumerate(motions):
+                  if motion.get('sound'):
+                      offenders.append(f'{group}[{i}]={motion["sound"]}')
+          if offenders:
+              raise SystemExit('Legacy motion audio still referenced: ' + ', '.join(offenders))
+          print('Kurisu motion definitions are silent; explicit AMA-DEUS voice owns audio output.')
+          PY
 
       - name: Adapt renderer for Android mobile and touch reactions
         run: python3 scripts/adapt-android-mobile.py
@@ -114,11 +132,32 @@ jobs:
       - name: Build renderer
         run: npm run build:render
 
+      - name: Purge legacy Kurisu motion MP3 from Android bundle
+        run: |
+          rm -rf dist/models/kurisu/sounds
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('dist/models/kurisu/kurisu.model.json')
+          data = json.loads(p.read_text())
+          offenders = []
+          for group, motions in data.get('motions', {}).items():
+              for i, motion in enumerate(motions):
+                  if motion.get('sound'):
+                      offenders.append(f'{group}[{i}]={motion["sound"]}')
+          if offenders:
+              raise SystemExit('Built model still references motion audio: ' + ', '.join(offenders))
+          if Path('dist/models/kurisu/sounds').exists():
+              raise SystemExit('Legacy Kurisu sounds directory still present in dist')
+          print('Built Android renderer contains no legacy Kurisu motion MP3 path.')
+          PY
+
       - name: Verify deterministic touch bundle
         run: |
           grep -R -q '__amaLastTouch' dist/assets
           test "$(find dist/Resources/amadeus-voices -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
-          echo "Touch -> one mobile owner -> direct OGG path is present in renderer bundle."
+          test ! -d dist/models/kurisu/sounds
+          echo "Touch -> one mobile owner -> explicit OGG only; legacy motion MP3 absent."
 
       - name: Create Capacitor Android shell
         run: |
@@ -143,6 +182,12 @@ jobs:
           grep -R -q 'capacitor-community-speech-recognition' android/capacitor.settings.gradle android/app/capacitor.build.gradle
           echo "SpeechRecognition native Android plugin is registered."
 
+      - name: Verify Capacitor bundle has no legacy Kurisu MP3
+        run: |
+          test ! -d android/app/src/main/assets/public/models/kurisu/sounds
+          ! grep -q '"sound"' android/app/src/main/assets/public/models/kurisu/kurisu.model.json
+          echo 'Final Capacitor assets are free of legacy motion-bound Kurisu audio.'
+
       - name: Configure Android permissions
         run: |
           python3 - <<'PY'
@@ -165,28 +210,28 @@ jobs:
 
       - name: Package APK
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk
-          sha256sum AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk.sha256
+          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk
+          sha256sum AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Android-v0.1.0-alpha.5-debug-APK
+          name: AMA-DEUS-Android-v0.1.0-alpha.6-debug-APK
           path: |
-            AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk
-            AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk.sha256
+            AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk
+            AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish Android prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.5]')
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.6]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "android-v0.1.0-alpha.5" \
-            "AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk#AMA-DEUS Android v0.1.0 alpha 5 APK" \
-            "AMA-DEUS-Android-v0.1.0-alpha.5-debug.apk.sha256#SHA-256 checksum" \
+          gh release create "android-v0.1.0-alpha.6" \
+            "AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk#AMA-DEUS Android v0.1.0 alpha 6 APK" \
+            "AMA-DEUS-Android-v0.1.0-alpha.6-debug.apk.sha256#SHA-256 checksum" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS Android v0.1.0 alpha 5 · Single Voice Path" \
-            --notes "Voice-consistency fix. Native mobile taps now have exactly one gesture owner, so Cubism onTap and the stage fallback cannot both speak for one physical tap. Starting a reference OGG explicitly cancels any Web Speech utterance. Direct touch reactions are restricted to the audited 48 kHz mono reference cohort to avoid switching between differently mastered source groups. The full 45-clip bank remains bundled for later curation." \
+            --title "AMA-DEUS Android v0.1.0 alpha 6 · Remove Legacy Motion Voice" \
+            --notes "Root-cause voice fix. The Cubism2 Kurisu model inherited motion-bound MP3 files in kurisu.model.json. pixi-live2d-display automatically plays a motion's configured sound, while AMA-DEUS also played its explicit Amadeus OGG, causing two different voices from one tap. Alpha 6 removes every motion sound reference and purges models/kurisu/sounds from the Android bundle. CI verifies the source model, built renderer and final Capacitor assets contain no legacy motion-bound Kurisu audio. Explicit Amadeus OGG is now the only character voice path on touch." \
             --prerelease
