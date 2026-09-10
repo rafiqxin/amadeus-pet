@@ -1,4 +1,5 @@
 import './mobile.css'
+import { SpeechRecognition } from '@capacitor-community/speech-recognition'
 import {
   checkServer,
   getRemoteConfig,
@@ -10,16 +11,16 @@ import {
 export function mountMobileUi(root, hooks = {}) {
   const {
     onSend = () => {},
-    onVoice = () => {},
+    onVoiceState = () => {},
   } = hooks
 
   const shell = document.createElement('div')
   shell.className = 'mobile-ui'
   shell.innerHTML = `
     <div class="mobile-dock" role="toolbar" aria-label="AMA-DEUS controls">
-      <button class="mobile-dock-btn" data-mobile-act="chat" aria-label="聊天">⌨</button>
-      <button class="mobile-dock-btn" data-mobile-act="voice" aria-label="语音">◉</button>
-      <button class="mobile-dock-btn" data-mobile-act="api" aria-label="API">⚙</button>
+      <button class="mobile-dock-btn" data-mobile-act="chat" aria-label="文字聊天">⌨</button>
+      <button class="mobile-dock-btn mobile-mic-btn" data-mobile-act="voice" aria-label="语音识别">●</button>
+      <button class="mobile-dock-btn" data-mobile-act="api" aria-label="API 设置">⚙</button>
     </div>
 
     <div class="mobile-sheet-backdrop" data-mobile-act="close"></div>
@@ -58,14 +59,15 @@ export function mountMobileUi(root, hooks = {}) {
       </label>
       <label class="mobile-field">
         <span>API Key</span>
-        <input class="mobile-api-key" type="password" autocomplete="off" placeholder="仅保存在当前预览 App" />
+        <input class="mobile-api-key" type="password" autocomplete="off" placeholder="输入新 Key；留空则保留已保存 Key" />
       </label>
       <div class="mobile-api-status">未检测</div>
       <div class="mobile-api-actions">
         <button class="mobile-secondary" type="button" data-mobile-act="clear-api">清除</button>
-        <button class="mobile-primary" type="button" data-mobile-act="save-api">保存并测试</button>
+        <button class="mobile-secondary" type="button" data-mobile-act="save-api">保存</button>
+        <button class="mobile-primary" type="button" data-mobile-act="save-test-api">保存并测试</button>
       </div>
-      <p class="mobile-api-note">当前预览版将密钥保存在本机 WebView 存储中。正式版会改为 iOS Keychain。</p>
+      <p class="mobile-api-note">Key 会持久保存在当前 App 的本机 WebView 存储中；留空保存不会覆盖旧 Key。</p>
     </section>
 
     <section class="mobile-sheet mobile-voice-sheet" aria-hidden="true">
@@ -77,9 +79,10 @@ export function mountMobileUi(root, hooks = {}) {
         </div>
         <button class="mobile-close" data-mobile-act="close">×</button>
       </div>
-      <div class="mobile-voice-orb">◉</div>
-      <p class="mobile-voice-copy">语音入口已预留。下一阶段接入语音识别、LLM 流式回复与 TTS/口型同步。</p>
-      <button class="mobile-primary mobile-voice-disabled" type="button" disabled>即将开放</button>
+      <div class="mobile-voice-orb">●</div>
+      <div class="mobile-voice-status">点击“开始收音”后说话，识别结果会自动发送给 Amadeus。</div>
+      <div class="mobile-voice-transcript"></div>
+      <button class="mobile-primary mobile-voice-start" type="button" data-mobile-act="voice-start">开始收音</button>
     </section>
   `
   root.appendChild(shell)
@@ -92,9 +95,14 @@ export function mountMobileUi(root, hooks = {}) {
   const endpointInput = shell.querySelector('.mobile-api-endpoint')
   const modelInput = shell.querySelector('.mobile-api-model')
   const keyInput = shell.querySelector('.mobile-api-key')
-  const statusEl = shell.querySelector('.mobile-api-status')
+  const apiStatusEl = shell.querySelector('.mobile-api-status')
+  const voiceStatusEl = shell.querySelector('.mobile-voice-status')
+  const voiceTranscriptEl = shell.querySelector('.mobile-voice-transcript')
+  const voiceStartBtn = shell.querySelector('.mobile-voice-start')
+  const micDockBtn = shell.querySelector('.mobile-mic-btn')
 
   let activeSheet = null
+  let listening = false
 
   function closeSheet() {
     activeSheet?.classList.remove('open')
@@ -116,8 +124,98 @@ export function mountMobileUi(root, hooks = {}) {
     endpointInput.value = cfg.endpoint || ''
     modelInput.value = cfg.model || ''
     keyInput.value = ''
-    statusEl.textContent = usingRemoteApi() ? '已保存远程 API 配置' : '当前使用本地模型模式'
+    keyInput.placeholder = cfg.hasApiKey
+      ? 'Key 已保存；留空则保持不变'
+      : '输入 API Key'
+    apiStatusEl.textContent = usingRemoteApi()
+      ? `远程 API 已保存${cfg.hasApiKey ? ' · Key 已保存' : ''}`
+      : '当前使用本地模型模式'
   }
+
+  function collectApiConfig() {
+    const next = {
+      endpoint: endpointInput.value,
+      model: modelInput.value,
+    }
+    const freshKey = keyInput.value.trim()
+    if (freshKey) next.apiKey = freshKey
+    return next
+  }
+
+  async function saveApi(test = false) {
+    setRemoteConfig(collectApiConfig())
+    keyInput.value = ''
+    loadApiFields()
+    if (!test) {
+      apiStatusEl.textContent = '配置已保存'
+      return
+    }
+    apiStatusEl.textContent = '正在测试连接…'
+    const ok = await checkServer()
+    apiStatusEl.textContent = ok ? '连接成功 · 配置已保存' : '配置已保存，但连接测试失败'
+  }
+
+  async function ensureSpeechPermission() {
+    const available = await SpeechRecognition.available()
+    if (!available?.available) throw new Error('当前设备不支持系统语音识别')
+    let permission = await SpeechRecognition.checkPermissions()
+    if (permission.speechRecognition !== 'granted') {
+      permission = await SpeechRecognition.requestPermissions()
+    }
+    if (permission.speechRecognition !== 'granted') {
+      throw new Error('需要麦克风与语音识别权限')
+    }
+  }
+
+  function setListening(on) {
+    listening = on
+    voiceStartBtn.textContent = on ? '停止收音' : '开始收音'
+    voiceStartBtn.classList.toggle('listening', on)
+    micDockBtn.classList.toggle('listening', on)
+    shell.querySelector('.mobile-voice-orb').classList.toggle('listening', on)
+    onVoiceState(on)
+  }
+
+  async function startVoice() {
+    if (listening) {
+      try { await SpeechRecognition.stop() } catch {}
+      setListening(false)
+      voiceStatusEl.textContent = '已停止'
+      return
+    }
+
+    voiceTranscriptEl.textContent = ''
+    voiceStatusEl.textContent = '正在请求语音权限…'
+
+    try {
+      await ensureSpeechPermission()
+      setListening(true)
+      voiceStatusEl.textContent = '正在收音，请说话…'
+
+      const result = await SpeechRecognition.start({
+        language: 'zh-CN',
+        maxResults: 1,
+        partialResults: false,
+        popup: false,
+      })
+
+      setListening(false)
+      const text = result?.matches?.[0]?.trim() || ''
+      if (!text) {
+        voiceStatusEl.textContent = '没有识别到有效语音，请重试'
+        return
+      }
+
+      voiceTranscriptEl.textContent = `识别：${text}`
+      voiceStatusEl.textContent = '识别完成，已发送给 Amadeus'
+      closeSheet()
+      onSend(text)
+    } catch (err) {
+      setListening(false)
+      voiceStatusEl.textContent = err?.message || '语音识别失败'
+    }
+  }
+
   loadApiFields()
 
   shell.addEventListener('click', async (e) => {
@@ -135,21 +233,16 @@ export function mountMobileUi(root, hooks = {}) {
       openSheet(apiSheet)
     } else if (act === 'voice') {
       openSheet(voiceSheet)
-      onVoice()
+    } else if (act === 'voice-start') {
+      await startVoice()
     } else if (act === 'clear-api') {
       clearRemoteConfig()
       loadApiFields()
-      statusEl.textContent = '已清除，恢复本地模型模式'
+      apiStatusEl.textContent = '已清除，恢复本地模型模式'
     } else if (act === 'save-api') {
-      const previous = getRemoteConfig()
-      setRemoteConfig({
-        endpoint: endpointInput.value,
-        model: modelInput.value,
-        apiKey: keyInput.value || (previous.apiKey ? '' : ''),
-      })
-      statusEl.textContent = '正在测试连接…'
-      const ok = await checkServer()
-      statusEl.textContent = ok ? '连接成功' : '连接失败，请检查 Endpoint / Key / 网络'
+      await saveApi(false)
+    } else if (act === 'save-test-api') {
+      await saveApi(true)
     }
   })
 
@@ -164,5 +257,8 @@ export function mountMobileUi(root, hooks = {}) {
 
   backdrop.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false })
 
-  return { closeSheet, openChat: () => openSheet(chatSheet) }
+  return {
+    closeSheet,
+    openChat: () => openSheet(chatSheet),
+  }
 }
