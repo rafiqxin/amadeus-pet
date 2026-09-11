@@ -11,7 +11,9 @@ import {
   getTtsConfig,
   setTtsConfig,
   clearTtsConfig,
+  synthesizeTts,
 } from '../voice/tts-client.js'
+import { playAudioBlob, unlockVoiceAudio } from '../voice/player.js'
 import { nativeSpeechAvailablePlatform, recognizeOnce, stopRecognition } from '../platform/speech.js'
 
 const hasNativeSpeech = nativeSpeechAvailablePlatform()
@@ -44,7 +46,7 @@ export function mountMobileUi(root, hooks = {}) {
       <label class="mobile-field"><span>Kurisu TTS Endpoint · 日语输出</span><input class="mobile-tts-endpoint" inputmode="url" placeholder="http://192.168.1.100:9881（留空禁用）" /></label>
       <div class="mobile-api-status">未检测</div>
       <div class="mobile-api-actions"><button class="mobile-secondary" type="button" data-mobile-act="clear-api">清除</button><button class="mobile-secondary" type="button" data-mobile-act="save-api">保存</button><button class="mobile-primary" type="button" data-mobile-act="save-test-api">保存并测试</button></div>
-      <p class="mobile-api-note">固定链路：中文输入 / 中文字幕 → 优先原版日语 OGG → 未命中时生成日语 Kurisu TTS。TTS Endpoint 留空即禁用生成语音。</p>
+      <p class="mobile-api-note">固定链路：中文输入 / 中文字幕 → 优先原版日语 OGG → 未命中时生成日语 Kurisu TTS。保存并测试会真正生成并在本机播放一句日语测试语音，不再只检查 /health。</p>
     </section>
 
     <section class="mobile-sheet mobile-voice-sheet" aria-hidden="true">
@@ -110,6 +112,10 @@ export function mountMobileUi(root, hooks = {}) {
   }
 
   async function saveApi(test = false) {
+    // This call happens directly from the settings button gesture.  Prime
+    // WebAudio now, before health checks / synthesis introduce async delays.
+    if (test) await unlockVoiceAudio()
+
     setRemoteConfig(collectApiConfig())
     const ttsEndpoint = ttsEndpointInput.value.trim()
     setTtsConfig({ endpoint: ttsEndpoint, enabled: !!ttsEndpoint })
@@ -119,10 +125,31 @@ export function mountMobileUi(root, hooks = {}) {
       apiStatusEl.textContent = '配置已保存'
       return
     }
+
     apiStatusEl.textContent = '正在测试 LLM / TTS…'
-    const [llmOk, tts] = await Promise.all([checkServer(), checkTtsServer()])
-    const ttsLabel = tts.reason === 'not-configured' ? '未配置' : (tts.ok ? 'OK/JA' : 'FAIL')
-    apiStatusEl.textContent = `LLM: ${llmOk ? 'OK' : 'FAIL'} · TTS: ${ttsLabel}`
+    const [llmOk, ttsHealth] = await Promise.all([checkServer(), checkTtsServer()])
+    const llmLabel = llmOk ? 'OK' : 'FAIL'
+    if (ttsHealth.reason === 'not-configured') {
+      apiStatusEl.textContent = `LLM: ${llmLabel} · TTS: 未配置`
+      return
+    }
+    if (!ttsHealth.ok) {
+      apiStatusEl.textContent = `LLM: ${llmLabel} · TTS: HEALTH FAIL${ttsHealth.reason ? ` · ${ttsHealth.reason}` : ''}`
+      return
+    }
+
+    apiStatusEl.textContent = `LLM: ${llmLabel} · TTS: 正在生成测试语音…`
+    try {
+      const generated = await synthesizeTts('接続テストです。紅莉栖の音声を確認します。', {
+        language: 'ja',
+        mood: 'normal',
+      })
+      const playback = await playAudioBlob(generated.blob)
+      if (!playback.played) throw playback.error || new Error('iOS audio playback did not start')
+      apiStatusEl.textContent = `LLM: ${llmLabel} · TTS: SYNTH/PLAY OK`
+    } catch (error) {
+      apiStatusEl.textContent = `LLM: ${llmLabel} · TTS: PLAY FAIL · ${String(error?.message || error).slice(0, 110)}`
+    }
   }
 
   function setListening(on) {
@@ -144,6 +171,9 @@ export function mountMobileUi(root, hooks = {}) {
       return
     }
 
+    // Prime playback from the microphone-button gesture so a later TTS reply
+    // can sound even after STT + LLM + translation have completed.
+    await unlockVoiceAudio()
     voiceTranscriptEl.textContent = ''
     voiceStatusEl.textContent = '正在请求麦克风/语音识别权限…'
     setListening(true)
@@ -184,6 +214,9 @@ export function mountMobileUi(root, hooks = {}) {
     e.preventDefault()
     const text = chatInput.value.trim()
     if (!text) return
+    // Keep this synchronous with the Send gesture; the actual reply may arrive
+    // many seconds later after LLM routing and GPT-SoVITS inference.
+    void unlockVoiceAudio()
     chatInput.value = ''
     closeSheet()
     onSend(text)
