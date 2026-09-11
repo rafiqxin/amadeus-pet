@@ -150,7 +150,8 @@ final class HarnessViewController: UIViewController, WKScriptMessageHandler, WKN
         probeSequence += 1
         let sequence = probeSequence
         let voice = String(describing: body["voice"] ?? "IDLE")
-        let base = "AMA_TEST_PROBE ready=\(intValue(body, "ready")) reactions=\(intValue(body, "reactions")) audio=\(intValue(body, "audio")) scroll=\(intValue(body, "scroll")) max=\(intValue(body, "max")) scrollable=\(intValue(body, "scrollable")) scrolled=\(intValue(body, "scrolled")) voice=\(voice)"
+        let touch = String(describing: body["touch"] ?? "none")
+        let base = "AMA_TEST_PROBE ready=\(intValue(body, "ready")) reactions=\(intValue(body, "reactions")) audio=\(intValue(body, "audio")) scroll=\(intValue(body, "scroll")) max=\(intValue(body, "max")) scrollable=\(intValue(body, "scrollable")) scrolled=\(intValue(body, "scrolled")) voice=\(voice) touch=\(touch)"
 
         // The scroll test must gesture on the real rendered transcript, not a
         // guessed screen coordinate. Read its live DOM rect and bridge the

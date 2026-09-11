@@ -41,17 +41,31 @@ async function boot() {
   const uiTestMode = String(window.__AMA_UI_TEST_MODE__ || '')
   document.body.classList.toggle('mobile-ios', isIOS)
 
-  const testState = { ready: 0, reactions: 0, audio: 0, scroll: 0, max: 0, scrollable: 0, scrolled: 0, voice: 'IDLE' }
+  const testState = { ready: 0, reactions: 0, audio: 0, scroll: 0, max: 0, scrollable: 0, scrolled: 0, voice: 'IDLE', touch: 'none' }
   let testProbe = null
+  // Test-only: prove whether WKWebView delivers a drag as DOM touch events at
+  // all. The Simulator swipe test reported scrolled=0 with no way to tell
+  // "gesture never arrived" from "gesture arrived and did not move the box".
+  if (uiTest) {
+    const seen = { start: 0, move: 0, cancel: 0 }
+    document.addEventListener('touchstart', () => { seen.start += 1; updateTestProbe() }, { capture: true, passive: true })
+    window.addEventListener('touchmove', () => { seen.move += 1; updateTestProbe() }, { capture: true, passive: true })
+    window.addEventListener('touchcancel', () => { seen.cancel += 1; updateTestProbe() }, { capture: true, passive: true })
+    window.__amaTouchSeen = seen
+  }
   const updateTestProbe = () => {
     if (!uiTest) return
+    if (window.__amaTouchSeen) {
+      const s = window.__amaTouchSeen
+      testState.touch = `${s.start}/${s.move}/${s.cancel}`
+    }
     if (!testProbe) {
       testProbe = document.createElement('div')
       testProbe.id = 'ama-test-probe'
       testProbe.style.cssText = 'position:fixed;left:2px;top:2px;z-index:100000;padding:2px 3px;background:#000;color:#fff;font:9px monospace;pointer-events:none;'
       document.body.appendChild(testProbe)
     }
-    testProbe.textContent = `AMA_TEST_PROBE ready=${testState.ready} reactions=${testState.reactions} audio=${testState.audio} scroll=${Math.round(testState.scroll)} max=${Math.round(testState.max)} scrollable=${testState.scrollable} scrolled=${testState.scrolled} voice=${testState.voice}`
+    testProbe.textContent = `AMA_TEST_PROBE ready=${testState.ready} reactions=${testState.reactions} audio=${testState.audio} scroll=${Math.round(testState.scroll)} max=${Math.round(testState.max)} scrollable=${testState.scrollable} scrolled=${testState.scrolled} voice=${testState.voice} touch=${testState.touch}`
     // XCUITest cannot reliably see arbitrary DOM text inside WKWebView. Mirror
     // the same state through a test-only native script-message bridge; the
     // harness exposes it as a UILabel accessibility element.
