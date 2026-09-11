@@ -1,9 +1,10 @@
 import { SpeechRecognition } from '@capacitor-community/speech-recognition'
+import { isNativeMobileRuntime } from './runtime.js'
 
 let recognitionBusy = false
 
 export function nativeSpeechAvailablePlatform() {
-  return typeof navigator !== 'undefined' && /Android|iPad|iPhone|iPod/i.test(navigator.userAgent)
+  return isNativeMobileRuntime()
 }
 
 export async function recognizeOnce({ language = 'zh-CN' } = {}) {

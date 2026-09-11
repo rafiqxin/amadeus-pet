@@ -8,6 +8,7 @@ import { mountBubble } from './ui/bubble.js'
 import { mountBoot } from './ui/boot.js'
 import { mountMobileUi } from './ui/mobile.js'
 import { mountIosCallTranscriptScroll } from './ui/ios-call-scroll.js'
+import { isIOSRuntime } from './platform/runtime.js'
 import { createDialogue } from './pet/dialogue.js'
 import { createSettings, applyVisualSettings } from './pet/settings.js'
 import { playRingTone } from './pet/tone.js'
@@ -33,7 +34,9 @@ async function boot() {
   const hudRoot = document.getElementById('hud-root')
   if (!stage || !canvas || !hudRoot) throw new Error('iOS CALL surface is incomplete')
 
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+  // Do not rely on iPad/iPhone tokens in the UA. Capacitor on iPadOS may use a
+  // desktop-class Macintosh UA even though this is a native iOS WKWebView.
+  const isIOS = isIOSRuntime()
   document.body.classList.toggle('mobile-ios', isIOS)
 
   const settings = createSettings()

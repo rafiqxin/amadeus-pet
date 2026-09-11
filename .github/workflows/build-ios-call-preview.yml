@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - chatgpt/ios-call-preview
+      - chatgpt/ios-runtime-debug
     paths:
       - '.github/workflows/build-ios-call-preview.yml'
       - 'src/**'
+      - 'tests/**'
       - 'models/kurisu/**'
       - 'public/Resources/amadeus-reference/**'
       - 'index.html'
@@ -36,6 +38,11 @@ jobs:
           npm install --save-exact @capacitor/core@7 @capacitor/ios@7 @capacitor-community/speech-recognition@7.0.1
           npm install --save-dev --save-exact @capacitor/cli@7
           npm ls @capacitor/core @capacitor/ios @capacitor-community/speech-recognition
+
+      - name: Run iOS runtime regression workspace tests
+        run: |
+          node tests/ios-runtime-contract.mjs
+          node tests/ios-ui-audio-contract.mjs
 
       - name: Bundle 45 Amadeus reference voice clips
         shell: bash
@@ -71,11 +78,14 @@ jobs:
           grep -q "CapacitorHttp" src/llm/client.js
           grep -q "CapacitorHttp" src/voice/tts-client.js
           grep -q "unlockVoiceAudio" src/voice/player.js
+          grep -q "isIOSRuntime" src/main.js
+          grep -q "detectIOSRuntime" src/platform/runtime.js
+          grep -q "isNativeMobileRuntime" src/platform/speech.js
           grep -q "LONG_REPLY_TTS_THRESHOLD" src/voice/pipeline.js
           grep -q "splitReplyForTts" src/voice/pipeline.js
-          grep -q "Long replies use deliberately conservative sequential chunks" src/voice/pipeline.js
           grep -q "settings.set('voice', true)" src/main.js
-          grep -q "CALL is a readable transcript surface" src/main.js
+          grep -q "mountIosStageTapFallback" src/main.js
+          grep -q "mountIosCallTranscriptScroll" src/main.js
           grep -q "overflow-y: auto" src/ui/ios-call-fixes.css
           grep -q "pointer-events: none" src/ui/ios-call-fixes.css
           grep -q "SYNTH/PLAY OK" src/ui/mobile.js
@@ -119,6 +129,7 @@ jobs:
           test ! -e dist/models/Mao
           test ! -e dist/models/Wanko
           test ! -e dist/models/kurisu/sounds
+          grep -R -q "AMA-DEUS-iOS" dist/assets || true
           echo "Verified iOS bundle: Kurisu/Cubism2 + $count reference voices"
 
       - name: Create Capacitor iOS shell
@@ -128,9 +139,15 @@ jobs:
             "appId": "com.rafiqxin.amadeus",
             "appName": "AMA-DEUS",
             "webDir": "dist",
-            "bundledWebRuntime": false
+            "bundledWebRuntime": false,
+            "ios": {
+              "preferredContentMode": "mobile",
+              "appendUserAgent": "AMA-DEUS-iOS"
+            }
           }
           JSON
+          grep -q '"preferredContentMode": "mobile"' capacitor.config.json
+          grep -q '"appendUserAgent": "AMA-DEUS-iOS"' capacitor.config.json
           npx cap add ios
           npx cap sync ios
 
@@ -182,39 +199,50 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
-      - name: Package unsigned IPA
+      - name: Verify packaged runtime configuration
         shell: bash
         run: |
           set -euo pipefail
           APP="build/DerivedData/Build/Products/Release-iphoneos/App.app"
           test -d "$APP"
+          grep -q '"preferredContentMode"[[:space:]]*:[[:space:]]*"mobile"' "$APP/capacitor.config.json"
+          grep -q 'AMA-DEUS-iOS' "$APP/capacitor.config.json"
+          count=$(find "$APP/public/Resources/amadeus-voices" -name '*.ogg' -type f | wc -l | tr -d ' ')
+          test "$count" = "45"
+          echo "Verified packaged runtime config and $count OGG clips"
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="build/DerivedData/Build/Products/Release-iphoneos/App.app"
           rm -rf build/Payload
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
           cd build
-          zip -qry AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa Payload
-          shasum -a 256 AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa | tee AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa.sha256
+          zip -qry AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa | tee AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned-IPA
+          name: AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned-IPA
           path: |
-            build/AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa
-            build/AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa.sha256
+            build/AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa
+            build/AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish iOS prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release ios v0.2.0-alpha.4]')
+        if: github.ref == 'refs/heads/chatgpt/ios-call-preview' && github.event_name == 'push' && contains(github.event.head_commit.message, '[release ios v0.2.0-alpha.5]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="ios-v0.2.0-alpha.4"
-          FILE="build/AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa"
-          SUM="build/AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa.sha256"
+          TAG="ios-v0.2.0-alpha.5"
+          FILE="build/AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa"
+          SUM="build/AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa.sha256"
           gh release create "$TAG" "$FILE" "$SUM" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS iOS v0.2.0 alpha 4 · Stable Voice + Scrollable CALL" \
-            --notes "Regression-recovery release based on the real-device-proven alpha.2 audio path. Removes alpha.3's custom active audio completion owner and restores the stable iOS player contract for bundled OGG and generated WAV playback. Fixes the invisible desktop HUD layer intercepting iOS Live2D taps, forces role voice on for the mobile product so stale localStorage cannot mute OGG/TTS, and retains the full 45-clip shuffle. Short replies use the exact alpha.2 single-WAV TTS path. Long replies are split conservatively and synthesized/playback sequentially rather than concurrently, prioritizing reliability before latency optimisation. CALL now shows the complete Chinese reply in a vertically scrollable transcript box while Japanese Kurisu speech plays. Unsigned IPA; user-side signing is required." \
+            --title "AMA-DEUS iOS v0.2.0 alpha 5 · iPad Runtime Fix" \
+            --notes "Fixes iPadOS native-runtime detection when WKWebView exposes a Macintosh user agent. The iOS CALL UI is preserved. Live2D taps now mount the mobile stage fallback on iPad, the existing CALL transcript gains its touch/wheel scroll behavior, mobile audio priming and STT mount correctly, and OGG/TTS media playback remains independent from WebAudio lipsync. Capacitor is also forced to preferredContentMode=mobile with an AMA-DEUS-iOS user-agent marker. Includes executable regression tests for iPad desktop UA, scrolling, and suspended-WebAudio playback. Unsigned IPA; user-side signing is required." \
             --prerelease
