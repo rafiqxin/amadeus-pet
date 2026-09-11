@@ -1,0 +1,52 @@
+/* iOS-only interaction corrections for the retained AMA-DEUS CALL surface. */
+
+/* The desktop HUD console spans the whole viewport and normally owns pointer
+   events. On iOS that invisible layer sits above the Live2D canvas and can eat
+   character taps. The mobile dock/sheets live outside this subtree, so make the
+   CALL chrome transparent to touch and opt the subtitle back in only for scroll. */
+body.mobile-ios.console-open.call-mode .hud-console,
+body.mobile-ios.console-open.call-mode .hud-frame,
+body.mobile-ios.console-open.call-mode .hud-call {
+  pointer-events: none !important;
+}
+
+/* Keep the complete Chinese answer in CALL. Long replies are a transcript, not
+   karaoke: the user can drag vertically while Japanese TTS continues. */
+body.mobile-ios.console-open.call-mode .call-subtitle {
+  pointer-events: auto !important;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  height: 20vh !important;
+  min-height: 15vh !important;
+  max-height: 24vh !important;
+  align-items: flex-start !important;
+  justify-content: flex-start !important;
+  text-align: left !important;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-right: 18px !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(232, 168, 56, .78) rgba(255, 255, 255, .08);
+}
+
+body.mobile-ios.console-open.call-mode .call-subtitle::-webkit-scrollbar {
+  width: 5px;
+}
+body.mobile-ios.console-open.call-mode .call-subtitle::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, .06);
+  border-radius: 999px;
+}
+body.mobile-ios.console-open.call-mode .call-subtitle::-webkit-scrollbar-thumb {
+  background: rgba(232, 168, 56, .82);
+  border-radius: 999px;
+}
+
+/* The actual mobile controls remain the only full CALL interaction chrome. */
+body.mobile-ios.console-open.call-mode .mobile-dock,
+body.mobile-ios.console-open.call-mode .mobile-sheet,
+body.mobile-ios.console-open.call-mode .mobile-sheet-backdrop {
+  pointer-events: auto;
+}
