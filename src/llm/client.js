@@ -1,5 +1,6 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core'
 import { buildVoiceClassifierMessages, parseVoiceClassifierResponse } from '../voice/semantic-router.js'
+import { PERSONA_PROMPT, moodLine } from './persona.js'
 
 const LOCAL_SERVER = 'http://127.0.0.1:8090'
 const STORAGE_KEY = 'amadeus-remote-llm-v2'
@@ -13,15 +14,12 @@ try {
 
 const history = []
 const MAX_HISTORY = 12
-const SYSTEM_PROMPT = `你是 AMA-DEUS 系统中的牧濑红莉栖。你是一个有连续人格、会记住上下文的对话角色，而不是旁白或通用客服。
 
-人格原则：
-- 逻辑严谨、聪明、带一点傲娇与吐槽，但不要每句话都刻意傲娇。
-- 对技术和科学问题可以认真解释；对日常交流保持自然、简短、有反应。
-- 不要声称自己是真人、原作官方系统或声优本人。
-- 默认使用用户正在使用的语言；当前用户使用中文时，以自然中文回答。
-- 回复优先 1~4 句，除非问题确实需要展开。
-- 不要输出动作舞台说明，例如“（脸红）”“*叹气*”；表情和动作由客户端单独驱动。`
+/* The persona prompt is the three-layer definition in ./persona.js, shared with
+   the local llama.cpp path. This file used to send a seven-line generic brief
+   while the real character material sat unused in src/pet/llm.js, which is why
+   replies read as a generic assistant. */
+const SYSTEM_PROMPT = PERSONA_PROMPT
 
 function cleanEndpoint(value) { return String(value || '').trim().replace(/\/$/, '').replace(/\/chat\/completions$/, '').replace(/\/models$/, '') }
 export function getRemoteConfig() { return { endpoint: remote.endpoint, model: remote.model, hasApiKey: !!remote.apiKey } }
@@ -38,16 +36,41 @@ function target(path) { return usingRemoteApi() ? `${cleanEndpoint(remote.endpoi
 function headers() { const out = { 'Content-Type': 'application/json' }; if (usingRemoteApi() && remote.apiKey) out.Authorization = `Bearer ${remote.apiKey}`; return out }
 function isNative() { try { return Capacitor.isNativePlatform() } catch { return typeof navigator !== 'undefined' && /Android|iPhone|iPad/i.test(navigator.userAgent) } }
 
-async function postJson(url, data, signal = null, timeoutMs = 60000) {
+/* Reasoning models (DeepSeek flash and similar) can spend the whole max_tokens
+   budget on hidden reasoning and return an empty `content` with finish_reason
+   "length". Raising max_tokens does not fix it — the reasoning grows to match.
+   These switches ask for the answer directly instead.
+   This file shipped without them, and the consequence was measured on device and
+   reproduced in the harness: `translateForKurisuTts` came back empty, the
+   pipeline threw "LLM returned an empty Japanese TTS translation", gave up on
+   speech and showed the reply as text only — no synthesis request ever reached
+   the TTS server, which is exactly what its log showed. */
+const NO_REASONING = { thinking: { type: 'disabled' }, reasoning_effort: 'none' }
+
+function withoutNoReasoning(data) {
+  const { thinking, reasoning_effort, ...rest } = data
+  return rest
+}
+
+async function postJson(url, data, signal = null, timeoutMs = 60000, allowRetry = true) {
   if (isNative() && usingRemoteApi()) {
     const response = await CapacitorHttp.post({ url, headers: headers(), data, connectTimeout: 15000, readTimeout: timeoutMs })
+    if (response.status === 400 && allowRetry && Object.prototype.hasOwnProperty.call(data, 'thinking')) {
+      return postJson(url, withoutNoReasoning(data), signal, timeoutMs, false)
+    }
     if (response.status < 200 || response.status >= 300) throw new Error(`LLM HTTP ${response.status}`)
     return typeof response.data === 'string' ? JSON.parse(response.data) : response.data
   }
   const timeout = AbortSignal.timeout(timeoutMs)
   const sig = signal ? AbortSignal.any([signal, timeout]) : timeout
   const response = await fetch(url, { method: 'POST', headers: headers(), body: JSON.stringify(data), signal: sig })
-  if (!response.ok) throw new Error(`LLM HTTP ${response.status}: ${(await response.text().catch(() => '')).slice(0, 200)}`)
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    if (response.status === 400 && allowRetry && Object.prototype.hasOwnProperty.call(data, 'thinking')) {
+      return postJson(url, withoutNoReasoning(data), signal, timeoutMs, false)
+    }
+    throw new Error(`LLM HTTP ${response.status}: ${detail.slice(0, 200)}`)
+  }
   return response.json()
 }
 
@@ -65,11 +88,14 @@ async function getJson(url, signal = null, timeoutMs = 6000) {
 }
 
 export async function checkServer(signal = null) { try { await getJson(target('/models'), signal); return true } catch { return false } }
-export async function chat(text, { signal = null } = {}) {
+export async function chat(text, { signal = null, mood = null } = {}) {
   const userText = String(text || '').trim()
   if (!userText) return ''
-  const messages = [{ role: 'system', content: SYSTEM_PROMPT }, ...history, { role: 'user', content: userText }]
-  const data = await postJson(target('/chat/completions'), { model: usingRemoteApi() ? remote.model : undefined, messages, temperature: 0.72, max_tokens: 400, stream: false }, signal, 90000)
+  const messages = [{ role: 'system', content: SYSTEM_PROMPT }]
+  const moodSteer = moodLine(mood)
+  if (moodSteer) messages.push({ role: 'system', content: moodSteer })
+  messages.push(...history, { role: 'user', content: userText })
+  const data = await postJson(target('/chat/completions'), { model: usingRemoteApi() ? remote.model : undefined, messages, temperature: 0.72, max_tokens: 400, stream: false, ...NO_REASONING }, signal, 90000)
   const reply = String(data?.choices?.[0]?.message?.content || '').trim()
   if (!reply) throw new Error('LLM returned an empty reply')
   history.push({ role: 'user', content: userText }, { role: 'assistant', content: reply })
@@ -79,7 +105,10 @@ export async function chat(text, { signal = null } = {}) {
 
 export async function classifyReferenceVoice(replyText, signal = null) {
   try {
-    const data = await postJson(target('/chat/completions'), { model: usingRemoteApi() ? remote.model : undefined, messages: buildVoiceClassifierMessages(replyText), temperature: 0, max_tokens: 320, stream: false }, signal, 20000)
+    // The classifier returns the matched clip AND its own tts_ja translation,
+    // so the budget has to cover prose as well as the small JSON envelope.
+    const budget = Math.min(4000, 400 + String(replyText || '').length * 4)
+    const data = await postJson(target('/chat/completions'), { model: usingRemoteApi() ? remote.model : undefined, messages: buildVoiceClassifierMessages(replyText), temperature: 0, max_tokens: budget, stream: false, ...NO_REASONING }, signal, 60000)
     return parseVoiceClassifierResponse(data?.choices?.[0]?.message?.content || '')
   } catch { return null }
 }
@@ -99,8 +128,28 @@ export async function translateForKurisuTts(replyText, signal = null) {
     },
     { role: 'user', content: text },
   ]
-  const data = await postJson(target('/chat/completions'), { model: usingRemoteApi() ? remote.model : undefined, messages, temperature: 0.15, max_tokens: 500, stream: false }, signal, 30000)
+  // Japanese runs longer than Chinese (roughly 1.15x the character count, and
+  // more tokens again), so a fixed 500-token budget truncated long replies
+  // mid-sentence. Scale with the input instead, with a ceiling that bounds cost.
+  const budget = Math.min(4000, 400 + text.length * 4)
+  const data = await postJson(target('/chat/completions'), { model: usingRemoteApi() ? remote.model : undefined, messages, temperature: 0.15, max_tokens: budget, stream: false, ...NO_REASONING }, signal, 60000)
   const translated = String(data?.choices?.[0]?.message?.content || '').trim()
   if (!translated) throw new Error('LLM returned an empty Japanese TTS translation')
-  return translated.replace(/^```(?:japanese|ja)?\s*/i, '').replace(/```$/i, '').trim()
+  return stripForSpeech(translated)
+}
+
+/* Spoken text must be plain prose. The model mirrors markdown from its own reply
+   even when told not to, and TTS would otherwise read out "**", "#" and list
+   bullets as noise. */
+function stripForSpeech(text) {
+  return String(text || '')
+    .replace(/^```[a-z]*\s*/i, '').replace(/```$/i, '')
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/(^|[\s(])\*(?!\s)([^*]+?)\*/g, '$1$2')
+    .replace(/^\s{0,3}(?:[-*+]|\d+\.)\s+/gm, '')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\s*\n+\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
 }
