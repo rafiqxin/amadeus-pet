@@ -71,11 +71,13 @@ jobs:
           grep -q "CapacitorHttp" src/llm/client.js
           grep -q "CapacitorHttp" src/voice/tts-client.js
           grep -q "unlockVoiceAudio" src/voice/player.js
-          grep -q "activeFinish" src/voice/player.js
+          grep -q "LONG_REPLY_TTS_THRESHOLD" src/voice/pipeline.js
           grep -q "splitReplyForTts" src/voice/pipeline.js
-          grep -q "LONG_REPLY_CLASSIFIER_LIMIT" src/voice/pipeline.js
-          grep -q "onSegmentStart" src/voice/pipeline.js
-          grep -q "segmentDriven" src/main.js
+          grep -q "Long replies use deliberately conservative sequential chunks" src/voice/pipeline.js
+          grep -q "settings.set('voice', true)" src/main.js
+          grep -q "CALL is a readable transcript surface" src/main.js
+          grep -q "overflow-y: auto" src/ui/ios-call-fixes.css
+          grep -q "pointer-events: none" src/ui/ios-call-fixes.css
           grep -q "SYNTH/PLAY OK" src/ui/mobile.js
           grep -q "synthesizeTts('接続テストです" src/ui/mobile.js
           grep -q "nextTouchReaction" src/main.js
@@ -90,12 +92,15 @@ jobs:
           node --input-type=module <<'NODE'
           import { VOICE_CATALOG } from './src/voice/catalog.js'
           import { TOUCH_REACTION_VOICE_IDS, nextTouchReaction, resetTouchReactions } from './src/pet/touch-reactions.js'
+          import { splitReplyForTts } from './src/voice/pipeline.js'
           if (VOICE_CATALOG.length !== 45 || new Set(VOICE_CATALOG.map(v => v.id)).size !== 45) throw new Error('voice catalog must contain 45 unique entries')
           if (TOUCH_REACTION_VOICE_IDS.length !== 45 || new Set(TOUCH_REACTION_VOICE_IDS).size !== 45) throw new Error('touch shuffle must expose all 45 voices')
           resetTouchReactions()
           const round = Array.from({ length: 45 }, () => nextTouchReaction('body').voice)
           if (new Set(round).size !== 45) throw new Error('touch shuffle repeated before exhausting 45 voices')
-          console.log('Verified 45 unique touch/OGG routes.')
+          const chunks = splitReplyForTts('第一段用于测试长回复。第二段继续解释量子计算为什么困难。第三段确保长文本会被拆成安全的语音块，而不是一次生成一个巨大 WAV。'.repeat(3))
+          if (chunks.length < 2 || chunks.some((x) => x.length > 72)) throw new Error('long TTS chunking contract failed')
+          console.log(`Verified 45 unique touch/OGG routes and ${chunks.length} long-reply TTS chunks.`)
           NODE
 
       - name: Build iOS renderer
@@ -187,29 +192,29 @@ jobs:
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
           cd build
-          zip -qry AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa Payload
-          shasum -a 256 AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa | tee AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa.sha256
+          zip -qry AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa | tee AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned-IPA
+          name: AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned-IPA
           path: |
-            build/AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa
-            build/AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa.sha256
+            build/AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa
+            build/AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish iOS prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release ios v0.2.0-alpha.3]')
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release ios v0.2.0-alpha.4]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="ios-v0.2.0-alpha.3"
-          FILE="build/AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa"
-          SUM="build/AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa.sha256"
+          TAG="ios-v0.2.0-alpha.4"
+          FILE="build/AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa"
+          SUM="build/AMA-DEUS-iOS-v0.2.0-alpha.4-unsigned.ipa.sha256"
           gh release create "$TAG" "$FILE" "$SUM" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS iOS v0.2.0 alpha 3 · Streaming Kurisu Voice" \
-            --notes "Fixes the two remaining real-device voice regressions reported after alpha.2. Rapid character taps no longer hold a touch-level busy lock: every accepted tap advances the 45-OGG shuffle and interrupts the previous clip cleanly. Long Chinese replies now skip pointless reference-voice classification, are split into sentence-sized visible chunks, translated to Japanese per chunk, synthesized into bounded WAVs, and pipelined so the next GPT-SoVITS segment renders while the current segment is playing. CALL subtitles follow the Chinese source segment currently being spoken and use actual audio duration where available. Keeps zh-CN input / Chinese visible text / Japanese Kurisu speech, semantic OGG routing, native Capacitor HTTP and iOS WebAudio fallback. Unsigned IPA; user-side signing is required." \
+            --title "AMA-DEUS iOS v0.2.0 alpha 4 · Stable Voice + Scrollable CALL" \
+            --notes "Regression-recovery release based on the real-device-proven alpha.2 audio path. Removes alpha.3's custom active audio completion owner and restores the stable iOS player contract for bundled OGG and generated WAV playback. Fixes the invisible desktop HUD layer intercepting iOS Live2D taps, forces role voice on for the mobile product so stale localStorage cannot mute OGG/TTS, and retains the full 45-clip shuffle. Short replies use the exact alpha.2 single-WAV TTS path. Long replies are split conservatively and synthesized/playback sequentially rather than concurrently, prioritizing reliability before latency optimisation. CALL now shows the complete Chinese reply in a vertically scrollable transcript box while Japanese Kurisu speech plays. Unsigned IPA; user-side signing is required." \
             --prerelease
