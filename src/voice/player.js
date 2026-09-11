@@ -2,7 +2,6 @@ import { getVoiceAudioUrl, getVoiceCatalogEntry } from './catalog.js'
 
 let activeAudio = null
 let activeObjectUrl = ''
-let activeFinish = null
 let audioCtx = null
 let analyserFrame = null
 let analyser = null
@@ -23,13 +22,10 @@ function stopAnalyser(onLevel = activeLevelCallback) {
 }
 
 /**
- * Prime/resume WebAudio while we are still inside a real user gesture.
- *
- * iOS can leave an AudioContext suspended even though HTMLMediaElement playback
- * itself is allowed. If a media element is connected to a suspended WebAudio
- * graph it becomes effectively silent, so callers should try to unlock early.
- * Failure is deliberately non-fatal: direct <audio> playback is our audible
- * fallback and lipsync is sacrificed for that utterance rather than the voice.
+ * Prime/resume WebAudio from a real user gesture.  iOS may otherwise keep the
+ * AudioContext suspended even though HTMLMediaElement playback itself is legal.
+ * If WebAudio cannot run we deliberately leave the media element outside the
+ * graph so the device still produces audible character speech.
  */
 export async function unlockVoiceAudio() {
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext
@@ -92,15 +88,10 @@ async function monitor(audio, onLevel) {
 }
 
 export function stopVoicePlayback() {
-  const finish = activeFinish
-  activeFinish = null
   try { activeAudio?.pause() } catch {}
   try { window.speechSynthesis?.cancel() } catch {}
   stopAnalyser()
   activeAudio = null
-  // Interrupted clips must resolve their previous onEnd waiter. Without this,
-  // rapid iOS taps leave old touch coroutines hanging forever.
-  try { finish?.({ interrupted: true }) } catch {}
   releaseObjectUrl()
 }
 
@@ -114,7 +105,7 @@ export async function playAudioUrl(url, {
   stopVoicePlayback()
   if (!url) {
     onLevel?.(0)
-    onEnd?.({ interrupted: false, failed: true })
+    onEnd?.()
     return { played: false }
   }
 
@@ -126,18 +117,16 @@ export async function playAudioUrl(url, {
   audio.playsInline = true
 
   let finished = false
-  const finish = (meta = {}) => {
+  const finish = () => {
     if (finished) return
     finished = true
-    if (activeFinish === finish) activeFinish = null
     stopAnalyser(onLevel)
     if (activeAudio === audio) activeAudio = null
     if (objectUrl && activeObjectUrl === url) releaseObjectUrl()
-    onEnd?.({ interrupted: false, ...meta })
+    onEnd?.()
   }
-  activeFinish = finish
-  audio.onended = () => finish({ ended: true })
-  audio.onerror = () => finish({ failed: true })
+  audio.onended = finish
+  audio.onerror = finish
 
   const lipsyncActive = await monitor(audio, onLevel)
   try {
@@ -146,7 +135,7 @@ export async function playAudioUrl(url, {
     onStart?.({ audio, durationSec, lipsyncActive })
     return { played: true, audio, durationSec, lipsyncActive }
   } catch (error) {
-    finish({ failed: true })
+    finish()
     return { played: false, error, lipsyncActive: false }
   }
 }
@@ -155,7 +144,7 @@ export async function playReferenceVoice(id, opts = {}) {
   const entry = getVoiceCatalogEntry(id)
   if (!entry) {
     opts.onLevel?.(0)
-    opts.onEnd?.({ failed: true })
+    opts.onEnd?.()
     return { played: false, entry: null }
   }
   const result = await playAudioUrl(getVoiceAudioUrl(id), opts)
@@ -165,7 +154,7 @@ export async function playReferenceVoice(id, opts = {}) {
 export async function playAudioBlob(blob, opts = {}) {
   if (!(blob instanceof Blob) || !blob.size) {
     opts.onLevel?.(0)
-    opts.onEnd?.({ failed: true })
+    opts.onEnd?.()
     return { played: false, error: new Error('empty TTS audio') }
   }
   return playAudioUrl(URL.createObjectURL(blob), { ...opts, objectUrl: true })
