@@ -1,39 +1,79 @@
 {
   "name": "amadeus-pet",
   "version": "0.1.0",
-  "description": "Unofficial fan-made Live2D desktop pet inspired by the Amadeus system of Steins;Gate. Original code and UI; character model is replaceable (official Live2D sample models used as placeholder).",
+  "description": "AMA-DEUS — a Chinese-speaking desktop companion that answers in Chinese and speaks Japanese in Makise Kurisu's own voice, using bundled original clips with a local GPT-SoVITS fallback.",
   "main": "electron/main.cjs",
   "license": "MIT",
+  "author": {
+    "name": "rafiqxin",
+    "url": "https://github.com/rafiqxin/amadeus-pet"
+  },
   "scripts": {
     "build:render": "vite build",
     "watch:render": "vite build --watch",
     "app": "electron .",
     "start": "npm run build:render && electron .",
     "pack": "npm run build:render && electron-builder --dir",
+    "dist": "npm run build:render && electron-builder",
+    "dist:win": "npm run build:render && electron-builder --win",
+    "icons": "python tools/make-icons.py",
     "voices:fetch": "node tools/fetch-voices.mjs",
     "verify:client": "node tools/verify-voice-client.mjs",
     "verify:chain": "node tools/verify-speech-chain.mjs"
   },
   "build": {
-    "appId": "com.fan.amadeus-pet",
-    "productName": "AMA-DEUS Pet",
+    "appId": "com.rafiqxin.amadeus",
+    "productName": "AMA-DEUS",
     "asar": true,
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/**/*"
     ],
     "extraResources": [
       {
         "from": "THIRD_PARTY_NOTICES",
         "to": "THIRD_PARTY_NOTICES"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
       }
     ],
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AMA-DEUS",
+      "artifactName": "AMA-DEUS-${version}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "AMA-DEUS-${version}-portable.${ext}"
     },
     "linux": {
+      "icon": "build/icon.png",
       "target": [
+        "AppImage",
         "dir"
       ],
       "category": "Utility",

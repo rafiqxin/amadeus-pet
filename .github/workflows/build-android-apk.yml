@@ -3,6 +3,9 @@ name: Build AMA-DEUS Android APK
 on:
   push:
     branches:
+      # Unified client branch (Chinese UI + Japanese Kurisu voice + desktop build).
+      - chatgpt/amadeus-core-workspace
+      # Superseded by the above; kept so the older branch keeps building.
       - chatgpt/amadeus-voice-workspace
     paths:
       - '.github/workflows/build-android-apk.yml'

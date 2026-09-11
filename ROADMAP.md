@@ -337,6 +337,54 @@ tick()   // 直接 return，且没有再排队 → 循环永远不启动
 
 **验证**：说话中的整图截图，嘴部明显张开（对比静止时的闭嘴微笑）。
 
+### Phase 2g — 双击桌面图标启动的打包版 ✅ 【已完成】
+
+**目标**：Windows 上有一个"点图标就能用"的 AMA-DEUS，且图标沿用 Java 版仓库的角色标识。
+
+**产物**：
+
+| 文件 | 说明 |
+| --- | --- |
+| `release\AMA-DEUS-0.1.0-setup.exe` | NSIS 安装程序，105 MB。装到 `%LOCALAPPDATA%\Programs\AMA-DEUS`，建桌面 + 开始菜单快捷方式，`perMachine:false` 免管理员 |
+| `release\AMA-DEUS-0.1.0-portable.exe` | 单文件绿色版，105 MB |
+| `release\win-unpacked\` | 免安装目录版 |
+
+**图标**：`build/icon-src.png` 取自 Java 版仓库的
+`app/src/main/ic_launcher-web.png`（512×512 RGBA，橙底白标），
+`tools/make-icons.py` 生成 7 档 `icon.ico` + 512 `icon.png`。
+`electron/main.cjs` 的 `windowIcon()` 在打包后读 `process.resourcesPath/icon.png`、
+开发时读 `build/icon.png`。
+
+**三个打包期才发现的问题**：
+
+1. **配置会分叉**。Electron 用 `productName` 推导 `userData`，打包版会去
+   `%APPDATA%\AMA-DEUS` 另起一份 LLM/TTS 配置，和 `npm start` 的
+   `%APPDATA%\amadeus-pet` 互不可见。修法是在 main 里显式
+   `app.setPath('userData', path.join(app.getPath('appData'), 'amadeus-pet'))`。
+2. **不需要 `node_modules`**。渲染层依赖已被 Vite 打进 `dist/assets/`，主进程只
+   require `electron` 和 `path`。`files` 里显式 `"!node_modules/**/*"` 后，
+   asar 从"照搬依赖"降到 11.5 MB / 106 条目。
+3. **桌面快捷方式不继承调用者的环境变量**。`.lnk` 由 shell 拉起，拿的是 Explorer
+   的环境，所以 `AMA_CAPTURE` 之类的诊断开关**经图标启动时不生效**——验证渲染必须
+   直接跑 exe，或者走 CDP。
+
+**验收**（都实际跑过）：
+
+- `release\win-unpacked\AMA-DEUS.exe` 启动后 CDP 取 DOM：页面 URL 是
+  `...resources/app.asar/dist/index.html`，标题 `AMA·DEUS`，`#phone` 246×437（严格 9:16）。
+- 静默安装 `setup.exe /S` 退出码 0，`C:\Users\xin\Desktop\AMA-DEUS.lnk` 指向
+  `...\Programs\AMA-DEUS\AMA-DEUS.exe`，开始菜单项同时生成。
+- 安装后的 `resources/app.asar` 与 `win-unpacked` 的 **SHA256 完全一致**
+  （`4A41601B…`），即已验证渲染的那份就是装出来的那份。
+- 双击快捷方式启动 → 4 个进程全部来自安装目录；`AMA_CAPTURE` 自截图得到
+  723×1281 的开机画面（Amadeus logo + `Connect to Kurisu?` + CONNECT/CANCEL）。
+- 从 exe 抽出的 32×32 图标 sha 与 stock `electron.exe` 不同 → rcedit 确实换了图标。
+
+**顺带确认的一件旧事**：`AMA_TRACE_BOUNDS=1` 下 10 秒内 `willResizes=1586`、
+窗口从 482×854 被拖到 383×558 —— 这是**人手动拖动缩放**造成的（有 5 秒完全静止的
+间歇，且比例由 CSS 维持为 9:16），不是 Phase 2d 那个 resize 风暴。两者要靠
+"是否间歇"和"比例是否保持"来区分。
+
 ### Phase 3 — Android alpha.9「真正 AI 发声」 【P1】
 
 **完整链路**：
@@ -435,6 +483,7 @@ TTS 模型**不进 APK**；手机只做客户端，PC 负责推理。
 Alpha 7   点击角色 + 45 OGG                                  ✓
 Alpha 8   Voice Catalog + Semantic Router，中文对话/日语 TTS    ✓ 代码完成
           └ Windows Kurisu TTS (9881) 已跑通                    ✓ 2026-09-10
+          └ 桌面端可双击图标启动（NSIS + 绿色版）                ✓ Phase 2g
 Alpha 9   Windows Kurisu TTS + Android LAN                     ← 当前主线
           中文聊天 + 中文字幕 + 日语红莉栖发声
 Alpha 10  Emotion Router：动作/表情/OGG/TTS 统一调度

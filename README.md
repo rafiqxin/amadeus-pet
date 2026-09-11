@@ -95,7 +95,33 @@ npm run voices:fetch
 
 没有它时角色点击不会发声，但 LLM 对话与 TTS 仍可用。
 
-### 4. 配置 LLM
+### 4. 打包成双击图标启动的桌面应用
+
+```bash
+npm run dist:win     # 产出 release/AMA-DEUS-<version>-setup.exe 与 -portable.exe
+```
+
+| 产物 | 用途 |
+| --- | --- |
+| `release\AMA-DEUS-<version>-setup.exe` | 安装程序。装到 `%LOCALAPPDATA%\Programs\AMA-DEUS`，自动建**桌面图标**与开始菜单项，可自选目录、免管理员 |
+| `release\AMA-DEUS-<version>-portable.exe` | 单文件绿色版，双击即用，不写注册表、不建图标 |
+| `release\win-unpacked\` | 免安装目录版，调试用 |
+
+安装后双击桌面的 **AMA-DEUS** 图标即可启动。图标取自 Java 版仓库
+（`app/src/main/ic_launcher-web.png`），用 `npm run icons` 可重新生成
+`build/icon.ico`（16→256 七档）与 `build/icon.png`。
+
+> **配置是共用的**：`electron/main.cjs` 把 `userData` 固定在
+> `%APPDATA%\amadeus-pet`。不固定的话，打包版的目录名来自 `productName`，
+> 会和 `npm start` 各存一份设置——同一个 app 两套 LLM/TTS 配置。
+>
+> **离线打包**：`electronDist` 已指向 `node_modules/electron/dist`，不会重新下载
+> Electron。下载 NSIS 组件慢时可以指定镜像：
+> ```powershell
+> $env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
+> ```
+
+### 5. 配置 LLM
 
 启动后点 CONNECT，右下角 ⚙ 打开设置，填写：
 
@@ -128,8 +154,9 @@ npm run voices:fetch
 | `src/ui/` | AMA-DEUS 界面外壳（状态栏、字幕、思考点、面板） |
 | `src/platform/` | 平台适配（中文语音识别） |
 | `voice-server/` | **语音后端**：9881 服务、参考音库、验收脚本 |
-| `electron/` | 窗口、拖拽、IPC 桥 |
+| `electron/` | 窗口、拖拽、IPC 桥；`userData` 固定在 `%APPDATA%\amadeus-pet` |
 | `tools/` | 下载器与验证工具 |
+| `build/` | 打包资源：图标源图与 `icon.ico` / `icon.png` |
 | `docs/` | [架构](docs/ARCHITECTURE.md) · [开发指南](docs/DEVELOPMENT.md) |
 | `legacy/` | 归档的早期实现，不在构建路径上（见 [legacy/README.md](legacy/README.md)） |
 | `.workspace/` | 本地大文件（GPT-SoVITS 源码与权重），不入库 |
@@ -143,6 +170,7 @@ npm run voices:fetch
 | `node tools/verify-voice-client.mjs` | 用 app 自己的 `tts-client.js` 校验 9881 契约 |
 | `node tools/verify-speech-chain.mjs` | 中文输入 → 中文回复 → 日语翻译 → TTS 全链路 |
 | `python voice-server/verify.py` | Phase 2 验收（模型加载 + 三情绪合成 + 语言护栏） |
+| `node tools/cdp-shot.cjs 9223 out.png` | 截图/取 DOM：对着带 `--remote-debugging-port` 的实例，用来验证打包版真的渲染出来了 |
 
 ---
 

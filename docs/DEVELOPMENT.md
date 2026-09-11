@@ -117,8 +117,35 @@ python voice-server/verify.py --url http://127.0.0.1:9881
 ## 8. 构建产物
 
 ```bash
-npm run pack      # electron-builder，输出到 release/
+npm run pack       # 免安装目录版 → release/win-unpacked/
+npm run dist:win   # 安装程序 + 单文件绿色版 → release/
+npm run dist       # 当前平台（Linux 上产出 AppImage）
 ```
+
+Windows 安装程序用 NSIS：装到 `%LOCALAPPDATA%\Programs\AMA-DEUS`，建桌面与开始菜单
+快捷方式，`perMachine:false` 所以不需要管理员。`build/` 里的
+`icon.ico` / `icon.png` 由 `npm run icons` 从 `icon-src.png` 生成
+（源图取自 Java 版仓库的 `ic_launcher-web.png`）。
+
+打好的包**只含 `dist/` + `electron/` + `package.json`**（`files` 里显式排除了
+`node_modules`）：渲染层需要的依赖已被 Vite 打进 `dist/assets/`，主进程只 require
+`electron` 和 `path`，所以 asar 约 11 MB，不含任何 `node_modules`。
+
+几个必须记住的点：
+
+- `electronDist` 指向 `node_modules/electron/dist`，打包不会重新下载 Electron。
+- `electron/main.cjs` 里 `app.setPath('userData', …/amadeus-pet)` 是**故意的**：
+  否则 `productName`（AMA-DEUS）会让打包版和 `npm start` 各存一份 LLM/TTS 配置。
+- 窗口图标由 `windowIcon()` 解析：打包后读 `process.resourcesPath/icon.png`
+  （`extraResources` 里映射过去的），开发时读 `build/icon.png`。
+- 验证打包版是否真的渲染出来，而不是只起了进程：
+  ```bash
+  AMA_CAPTURE=preview/packed.png AMA_CAPTURE_DELAY=10000 \
+    ./release/win-unpacked/AMA-DEUS.exe --remote-debugging-port=9223
+  node tools/cdp-shot.cjs 9223 preview/packed-shot.png   # 另一条路：CDP 截图
+  ```
+  注意 `AMA_CAPTURE` 这类环境变量**经由桌面快捷方式启动时不会生效**——
+  `.lnk` 是 shell 拉起的，继承的是 Explorer 的环境。
 
 Android 由 `.github/workflows/build-android-apk.yml` 构建：它会拉取 45 条 OGG、
 断言语言合同、并把 `legacy/` 排除在 APK 之外。**改动了合同相关代码就跑一次

@@ -16,7 +16,23 @@ let pinnedSize = null
 const PET_W = 480
 const PET_H = 853 // phone ratio 9:16 (Amadeus phone-app proportions)
 
+/* One config store for dev and packaged runs alike. Electron would otherwise
+   derive the folder from productName, so the installed build ("AMA-DEUS")
+   would start from an empty LLM/TTS configuration while `npm start` kept the
+   saved one — same app, two divergent settings files. */
+app.setPath('userData', path.join(app.getPath('appData'), 'amadeus-pet'))
+
 function clamp(v, min, max) { return Math.min(Math.max(v, min), max) }
+
+/* Window/taskbar icon. Packaged builds read the copy electron-builder drops in
+   resources/, since build/ itself is not shipped inside the asar. */
+function windowIcon() {
+  const p = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(__dirname, '..', 'build', 'icon.png')
+  const img = nativeImage.createFromPath(p)
+  return img.isEmpty() ? undefined : img
+}
 
 function createWindow() {
   win = new BrowserWindow({
@@ -32,6 +48,7 @@ function createWindow() {
     // Appear in the taskbar so the OS itself offers close/minimise. Without a
     // tray, skipping the taskbar left the frameless window unclosable.
     skipTaskbar: false,
+    icon: windowIcon(),
     fullscreenable: false,
     maximizable: false,
     minimizable: true,
