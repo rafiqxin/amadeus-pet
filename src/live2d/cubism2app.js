@@ -10,7 +10,7 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
   let model = null, nextIdleAt = 0, aabbData = null
   const look = { x: 0, y: 0, tx: 0, ty: 0 }
   let captured = false, moved = false, downX = 0, downY = 0
-  let pendingMouth = null
+  // pendingMouth / mouthLevel / lipSyncModel are declared with the lip sync below.
 
   canvas.style.touchAction = 'none'
   canvas.style.pointerEvents = 'auto'
@@ -57,27 +57,60 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
     if (mm.isFinished() && Date.now() > nextIdleAt) { const defs = mm.definitions.idle || []; if (defs.length) { model.motion('idle', Math.floor(Math.random() * defs.length)); nextIdleAt = Date.now() + 3000 + Math.random() * 5000 } }
   })
 
-  /* The audio envelope is parked here and written as the very last step of each
-     frame, after the motion has had its say.
-     The value then persists into the next frame's deformer pass, which is what
-     actually bends the mouth — the draw for THIS frame has already happened, so
-     the parameter simply lands one frame early instead of never. */
-  let lipSyncAttached = false
-  function attachLipSync() {
-    if (lipSyncAttached) return          // loadModel can run more than once
-    lipSyncAttached = true
-    app.ticker.add(() => {
-      if (!model || pendingMouth === null) return
-      setParam('PARAM_MOUTH_OPEN_Y', pendingMouth)
-      pendingMouth = null
-    }, PIXI.UPDATE_PRIORITY?.LOW ?? -25)
+  /* ---- Lip sync ----------------------------------------------------------
+   *
+   * The mouth parameter has to be written where the library's own update order
+   * lets it survive. That order, from Cubism2InternalModel.update(), is:
+   *
+   *     motionManager.update()        <- motion writes params
+   *     model.saveParam()
+   *     expressionManager.update()    <- expression writes params
+   *     updateFocus(), updateNaturalMovements()
+   *     emit('beforeModelUpdate')
+   *     model.update()                <- the deformation happens HERE
+   *     model.loadParam()             <- restores what saveParam() stored
+   *
+   * So the only slot that both follows the motion/expression and precedes the
+   * deformation is the library's own 'beforeModelUpdate' event. Writing from a
+   * low-priority ticker callback instead puts the value after the deformation —
+   * it does nothing for this frame, and the next frame's motion update wipes it
+   * via loadParam(). All 18 motions in this model animate PARAM_MOUTH_OPEN_Y
+   * (idle, flickHead, tapBody, ...), so the motion always won and the mouth only
+   * moved when the motion happened to move it.
+   *
+   * The expressions are left alone on purpose: f02/f03/f04 drive PARAM_MOUTH_FORM
+   * and PARAM_MOUTH_SIZE, which shape the mouth rather than open it, and they
+   * keep working because this write only owns the openness. */
+  let pendingMouth = null
+  let mouthLevel = 0
+  let lipSyncModel = null
+
+  function onBeforeModelUpdate() {
+    if (pendingMouth === null) return   // no speech: the motion owns the mouth
+    const target = pendingMouth
+    // Open quickly, close more slowly. A raw 25 fps envelope written straight to
+    // the parameter chatters between syllables; the asymmetry is what makes it
+    // read as speech.
+    mouthLevel += (target - mouthLevel) * (target > mouthLevel ? 0.6 : 0.28)
+    if (target === 0 && mouthLevel < 0.01) {
+      mouthLevel = 0
+      pendingMouth = null               // speech over: hand the mouth back
+    }
+    setParam('PARAM_MOUTH_OPEN_Y', mouthLevel)
+  }
+
+  function attachLipSync(internalModel) {
+    if (lipSyncModel === internalModel) return
+    if (lipSyncModel) { try { lipSyncModel.off('beforeModelUpdate', onBeforeModelUpdate) } catch {} }
+    lipSyncModel = internalModel
+    try { internalModel?.on('beforeModelUpdate', onBeforeModelUpdate) } catch { lipSyncModel = null }
   }
 
   return {
     async loadModel(dir, fileName) {
       if (model) { model.destroy(); model = null }
       model = await Live2DModel.from(`${dir}${fileName}`, { autoInteract: false }); model.autoUpdate = true; app.stage.addChild(model)
-      attachLipSync()
+      attachLipSync(model.internalModel)
       function computeAABB() {
         const core = model.internalModel.coreModel, count = core._$5S?._$aS?.length || 0
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
@@ -87,13 +120,19 @@ export async function createPetAppCubism2(canvas, hooks = {}) {
       setTimeout(() => { const b = computeAABB(); if (isFinite(b.w) && b.w > 0) { aabbData = { w: b.w, h: b.h, cx: (b.minX + b.maxX) / 2, cy: (b.minY + b.maxY) / 2 }; refit() } else { model.anchor.set(0.5, 0.5); const s = Math.min((W * 0.96) / model.width, (H * 0.96) / model.height); model.scale.set(s); model.x = W / 2; model.y = H / 2 } }, 400)
       onLoaded(model); nextIdleAt = Date.now() + 2000; return model
     },
-    setMouthOpen(v) { pendingMouth = Math.max(0, Math.min(1, Number(v) || 0)) },
+    setMouthOpen(v) {
+      const level = Math.max(0, Math.min(1, Number(v) || 0))
+      // Ignore a zero when no speech is in progress, so an idle motion keeps
+      // owning the mouth instead of being pinned shut.
+      if (level <= 0 && pendingMouth === null) return
+      pendingMouth = level
+    },
     setExpression: expression,
     setRandomExpression() { expression(`f0${1 + Math.floor(Math.random() * 4)}`) },
     startRandomMotion: randomMotion,
     startMotion(group, no, priority) { model?.motion(String(group).toLowerCase(), no, priority || 3) },
     resize(w, h) { W = Math.round(Number(w) || 480); H = Math.round(Number(h) || 640); app.renderer.resize(W, H); canvas.style.width = '100%'; canvas.style.height = '100%'; refit() },
     getManager: () => wrapper(), gl: null,
-    async dispose() { canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointermove', onMove); canvas.removeEventListener('pointerup', onUp); canvas.removeEventListener('pointercancel', onCancel); canvas.removeEventListener('pointerleave', onLeave); if (model) { model.destroy(); model = null }; app.destroy(true) },
+    async dispose() { canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointermove', onMove); canvas.removeEventListener('pointerup', onUp); canvas.removeEventListener('pointercancel', onCancel); canvas.removeEventListener('pointerleave', onLeave); if (lipSyncModel) { try { lipSyncModel.off('beforeModelUpdate', onBeforeModelUpdate) } catch {}; lipSyncModel = null } if (model) { model.destroy(); model = null }; app.destroy(true) },
   }
 }

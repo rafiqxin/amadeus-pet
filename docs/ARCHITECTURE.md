@@ -135,6 +135,36 @@ SYNTH → DECODE → PLAY → END` 记录。设置面板底部那行就是它。
 实测（一次完整回复，采样每次 `setMouthOpen`）：1357 次采样、998 次非零（74%）、49 个不同
 开合值。那 26% 的闭合是词句停顿——正是它让嘴看起来在说话而不是机械开合。
 
+### 写入时机：只在 `beforeModelUpdate`
+
+**这是第二个坑，而且更隐蔽。** `Cubism2InternalModel.update()` 的顺序是：
+
+```js
+motionManager.update()          // 动作写参数
+model.saveParam()
+expressionManager.update()      // 表情写参数
+updateFocus(); updateNaturalMovements(...)
+emit('beforeModelUpdate')       // ← 唯一正确的插入点
+model.update()                  // ← 变形在这里发生
+model.loadParam()               // ← 把参数还原成 saveParam 存的值
+```
+
+口型最初写在 ticker 的低优先级槽位（`UPDATE_PRIORITY.LOW`），而模型的 `update()` 在
+`HIGH` —— **写在变形之后**：本帧没用，下一帧动作的 `loadParam()` 又把它冲掉。
+
+而这个模型里**18 个动作全部**都在写 `PARAM_MOUTH_OPEN_Y`（idle、flickHead、tapBody…），
+所以永远是动作赢 —— 表现就是"说话时嘴不动，除非动作自己碰巧动了一下嘴"。
+
+修法：挂 `beforeModelUpdate` 事件，在动作与表情之后、变形之前写入。
+实测同一采样点非零帧从 **34% → 76%**，且从第一帧就开始爬升。
+
+表达式保持不动是有意的：`f02/f03/f04` 驱动的是 `PARAM_MOUTH_FORM` 与 `PARAM_MOUTH_SIZE`
+（嘴型而非开合），我们的写入只接管开合，所以表情照常生效。
+
+**验证时的陷阱**：从帧外读 `getParamFloat('PARAM_MOUTH_OPEN_Y')` 得到的是
+`loadParam()` 还原后的**动作值**，不是我们的值。唯一有效的采样点是在
+`beforeModelUpdate` 上注册一个**晚于**应用的监听器，读到的才是变形将要用到的值。
+
 ---
 
 ## 6. 人格层
