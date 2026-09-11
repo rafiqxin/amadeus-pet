@@ -71,6 +71,11 @@ jobs:
           grep -q "CapacitorHttp" src/llm/client.js
           grep -q "CapacitorHttp" src/voice/tts-client.js
           grep -q "unlockVoiceAudio" src/voice/player.js
+          grep -q "activeFinish" src/voice/player.js
+          grep -q "splitReplyForTts" src/voice/pipeline.js
+          grep -q "LONG_REPLY_CLASSIFIER_LIMIT" src/voice/pipeline.js
+          grep -q "onSegmentStart" src/voice/pipeline.js
+          grep -q "segmentDriven" src/main.js
           grep -q "SYNTH/PLAY OK" src/ui/mobile.js
           grep -q "synthesizeTts('接続テストです" src/ui/mobile.js
           grep -q "nextTouchReaction" src/main.js
@@ -182,29 +187,29 @@ jobs:
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
           cd build
-          zip -qry AMA-DEUS-iOS-v0.2.0-alpha.2-unsigned.ipa Payload
-          shasum -a 256 AMA-DEUS-iOS-v0.2.0-alpha.2-unsigned.ipa | tee AMA-DEUS-iOS-v0.2.0-alpha.2-unsigned.ipa.sha256
+          zip -qry AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa | tee AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-iOS-v0.2.0-alpha.2-unsigned-IPA
+          name: AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned-IPA
           path: |
-            build/AMA-DEUS-iOS-v0.2.0-alpha.2-unsigned.ipa
-            build/AMA-DEUS-iOS-v0.2.0-alpha.2-unsigned.ipa.sha256
+            build/AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa
+            build/AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish iOS prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release ios v0.2.0-alpha.2]')
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release ios v0.2.0-alpha.3]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="ios-v0.2.0-alpha.2"
-          FILE="build/AMA-DEUS-iOS-v0.2.0-alpha.2-unsigned.ipa"
-          SUM="build/AMA-DEUS-iOS-v0.2.0-alpha.2-unsigned.ipa.sha256"
+          TAG="ios-v0.2.0-alpha.3"
+          FILE="build/AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa"
+          SUM="build/AMA-DEUS-iOS-v0.2.0-alpha.3-unsigned.ipa.sha256"
           gh release create "$TAG" "$FILE" "$SUM" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS iOS v0.2.0 alpha 2 · Native Voice Playback Fix" \
-            --notes "Keeps the established iOS CALL/mobile UI and main-derived conversation/voice core. Fixes iOS silent audio caused by routing media through a suspended WebAudio graph: WebAudio is primed from user gestures and playback falls back to direct device audio if the graph cannot run. The settings test now performs the complete TTS path (health -> Japanese GPT-SoVITS synthesis -> WAV transfer -> on-device playback) and reports SYNTH/PLAY OK only after playback starts. Retains the 45 original OGG touch shuffle, semantic OGG routing, zh-CN speech input, Chinese visible replies, Japanese-only Kurisu TTS, Live2D reactions and audio-driven lipsync when WebAudio is available. Unsigned IPA; user-side signing is required." \
+            --title "AMA-DEUS iOS v0.2.0 alpha 3 · Streaming Kurisu Voice" \
+            --notes "Fixes the two remaining real-device voice regressions reported after alpha.2. Rapid character taps no longer hold a touch-level busy lock: every accepted tap advances the 45-OGG shuffle and interrupts the previous clip cleanly. Long Chinese replies now skip pointless reference-voice classification, are split into sentence-sized visible chunks, translated to Japanese per chunk, synthesized into bounded WAVs, and pipelined so the next GPT-SoVITS segment renders while the current segment is playing. CALL subtitles follow the Chinese source segment currently being spoken and use actual audio duration where available. Keeps zh-CN input / Chinese visible text / Japanese Kurisu speech, semantic OGG routing, native Capacitor HTTP and iOS WebAudio fallback. Unsigned IPA; user-side signing is required." \
             --prerelease
