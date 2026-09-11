@@ -3,7 +3,11 @@ release/
 dist/
 
 # --- local-only / large assets (not pushed) ---
-llm/
+
+# Root-anchored on purpose. A bare `llm/` also matches `src/llm/`, which silently
+# kept the LLM client out of every commit — CI failed with
+# "Could not resolve './llm/client.js'" while the local tree built fine.
+/llm/
 
 # Local TTS workspace: GPT-SoVITS source, downloaded checkpoints, conda env.
 # Code that uses it lives in voice-server/ and is tracked.
