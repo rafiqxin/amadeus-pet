@@ -3,7 +3,7 @@ name: Build AMA-DEUS Android APK
 on:
   push:
     branches:
-      - chatgpt/amadeus-voice-workspace
+      - android
     paths:
       - '.github/workflows/build-android-apk.yml'
       - 'src/**'
