@@ -69,6 +69,28 @@ assert.match(scrollSource, /const next = Math\.max\(0, Math\.min\(max, touchTop 
 assert.match(scrollSource, /el\.addEventListener\('wheel', onWheel, \{ passive: false \}\)/,
   'desktop wheel support drives the same markup in the Electron harness')
 
+// Lip sync must never route the element through the Web Audio graph again.
+// createMediaElementSource() removes the element's direct output, and on this
+// device the routed path was silent — which is why the mouth ended up driven by
+// model motion instead of the voice. The envelope is decoded offline and sampled
+// by the element's own currentTime, so playback stays on the audible path.
+const playerJs = fs.readFileSync(new URL('../src/voice/player.js', import.meta.url), 'utf8')
+// Assertions about what the code does must not trip over the comments that
+// explain why the forbidden approach was removed.
+const playerCode = playerJs.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+assert.doesNotMatch(playerCode, /createMediaElementSource/,
+  'rerouting the audio element through WebAudio silences playback on WKWebView; lip sync must stay offline')
+assert.doesNotMatch(playerCode, /getByteTimeDomainData/,
+  'a live AnalyserNode requires the reroute that silences playback')
+assert.match(playerCode, /parseWavChannels/,
+  'the TTS WAVs are parsed directly, which needs no decoding API')
+assert.match(playerCode, /decodeAudioData/,
+  'the bundled Ogg clips are decoded offline, which does not touch the output path')
+assert.match(playerCode, /audio\.currentTime \|\| 0\) \* ENVELOPE_FPS/,
+  'the envelope must be sampled by the element clock so the mouth follows the voice')
+assert.match(playerCode, /typeof requestAnimationFrame !== 'function'\) return false/,
+  'lip sync must degrade quietly where rAF is unavailable instead of throwing')
+
 let playCalls = 0
 class SuspendedAudioContext {
   constructor() { this.state = 'suspended'; this.sampleRate = 44100 }

@@ -1,13 +1,12 @@
 import { getVoiceAudioUrl, getVoiceCatalogEntry } from './catalog.js'
 import { voiceDiagnostic } from './diagnostics.js'
-import { isNativeMobileRuntime } from '../platform/runtime.js'
 
 let activeAudio = null
 let activeObjectUrl = ''
 let activeFinish = null
 let audioCtx = null
 let analyserFrame = null
-let analyser = null
+let envelope = null
 let activeLevelCallback = null
 let activeWatchdog = null
 
@@ -20,7 +19,7 @@ function releaseObjectUrl() {
 function stopAnalyser(onLevel = activeLevelCallback) {
   if (analyserFrame) cancelAnimationFrame(analyserFrame)
   analyserFrame = null
-  analyser = null
+  envelope = null
   activeLevelCallback = null
   onLevel?.(0)
 }
@@ -58,12 +57,9 @@ export async function unlockVoiceAudio() {
  * "The operation couldn't be completed" and stays broken until the session is
  * free again. startVoice() used to call unlockVoiceAudio() immediately before
  * recognizeOnce(), which armed exactly that conflict, so it now releases the
- * session instead.
- *
- * Suspending is also the safe direction for playback: with the context
- * suspended, monitor() declines to reroute the audio element through WebAudio
- * and the element plays directly, which is the path that demonstrably works on
- * device. It is resumed by the next gesture (unlockVoiceAudio on send or tap). */
+ * session instead. It is resumed by the next gesture (unlockVoiceAudio on send
+ * or tap). Playback itself no longer depends on the context either way: lip sync
+ * decodes offline, so the element always outputs directly. */
 export async function suspendVoiceAudio() {
   stopVoicePlayback('voice-capture')
   const ctx = audioCtx
@@ -73,62 +69,149 @@ export async function suspendVoiceAudio() {
   } catch {}
 }
 
-/* Lip sync is opportunistic. It must never be allowed to block or delay the
-   audible HTMLMediaElement path on WKWebView.
+/* ---- Lip sync ------------------------------------------------------------
  *
- * On native mobile it is skipped entirely, and that is deliberate.
- * createMediaElementSource() *removes* the element's direct output: from then on
- * the audio only reaches the speakers through the AudioContext graph. Measured
- * on device, the two paths behave differently:
+ * The mouth is driven from an amplitude envelope computed OFFLINE from the
+ * clip's own samples, then sampled by the audio element's currentTime.
  *
- *   bundled OGG at boot, no gesture yet, context suspended
- *     -> PLAY OK "media direct"      audible
- *   anything after a gesture armed the AudioContext (unlockVoiceAudio)
- *     -> PLAY OK "media + lipsync"   routed through WebAudio
+ * The previous approach routed the element through the Web Audio graph with
+ * createMediaElementSource() to read a live AnalyserNode. That has a fatal
+ * property on WKWebView: creating the source node *removes* the element's direct
+ * output, so from then on the audio only reaches the speakers through the graph.
+ * On this device the routed path was silent, which is why mobile had to skip lip
+ * sync entirely and the mouth then only moved with the model's own motion data —
+ * visibly out of step with the voice.
  *
- * The reported failure is that LLM replies synthesised fine server-side (the
- * TTS log shows the WAVs being produced) and then produced no sound, i.e. the
- * routed path. Direct playback is the only path demonstrated to make noise on
- * this device, so mobile takes it and gives up the analyser. The mouth is inert
- * either way unless the graph is running, so nothing that currently works is
- * lost. Desktop keeps the analyser and its lip sync. */
-function monitor(audio, onLevel) {
-  if (!onLevel) return false
-  if (isNativeMobileRuntime()) { onLevel(0); return false }
-  try {
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext
-    if (!AudioContextCtor) { onLevel(0); return false }
-    audioCtx ||= new AudioContextCtor()
-    if (audioCtx.state !== 'running') { onLevel(0); return false }
+ * Decoding to PCM touches no output path at all, so the element keeps playing
+ * directly (audible) and the mouth follows it. The envelope is built in the
+ * background and never delays playback; if decoding fails the mouth simply stays
+ * closed, as it did before. */
 
-    const source = audioCtx.createMediaElementSource(audio)
-    analyser = audioCtx.createAnalyser()
-    analyser.fftSize = 256
-    source.connect(analyser)
-    analyser.connect(audioCtx.destination)
-    activeLevelCallback = onLevel
+const ENVELOPE_FPS = 25
+const ENVELOPE_FRAME_MS = Math.round(1000 / ENVELOPE_FPS)
 
-    const data = new Uint8Array(analyser.fftSize)
-    const tick = () => {
-      if (!analyser) { onLevel(0); return }
-      if (audio.ended) { stopAnalyser(onLevel); return }
-      if (audio.paused) { analyserFrame = requestAnimationFrame(tick); return }
-      analyser.getByteTimeDomainData(data)
-      let sum = 0
-      for (const x of data) {
-        const v = (x - 128) / 128
+/* Same response curve the live analyser used, so the mouth keeps the feel it had
+   where that path did work (desktop). */
+function levelFromRms(rms) {
+  return Math.max(0, Math.min(1, (rms - 0.012) * 5.5))
+}
+
+function envelopeFromChannels(channels, sampleRate) {
+  const frames = channels[0]?.length || 0
+  if (!frames || !sampleRate) return null
+  const frameSize = Math.max(1, Math.round(sampleRate / ENVELOPE_FPS))
+  const out = new Float32Array(Math.ceil(frames / frameSize))
+  for (let f = 0; f < out.length; f += 1) {
+    const start = f * frameSize
+    const end = Math.min(start + frameSize, frames)
+    let sum = 0
+    let n = 0
+    for (let i = start; i < end; i += 1) {
+      for (const channel of channels) {
+        const v = channel[i]
         sum += v * v
+        n += 1
       }
-      const rms = Math.sqrt(sum / data.length)
-      onLevel(Math.max(0, Math.min(1, (rms - 0.012) * 5.5)))
-      analyserFrame = requestAnimationFrame(tick)
     }
-    tick()
-    return true
+    out[f] = n ? levelFromRms(Math.sqrt(sum / n)) : 0
+  }
+  return out
+}
+
+/* Minimal RIFF/WAVE reader. The Kurisu TTS server returns 32 kHz 16-bit mono
+   PCM, so the common case needs no decoding API at all — which also sidesteps
+   WKWebView's lack of Ogg Vorbis support for the bundled clips. */
+function parseWavChannels(buffer) {
+  try {
+    const view = new DataView(buffer)
+    if (view.byteLength < 44) return null
+    if (view.getUint32(0, false) !== 0x52494646) return null // 'RIFF'
+    if (view.getUint32(8, false) !== 0x57415645) return null // 'WAVE'
+    let offset = 12
+    let format = null
+    let dataOffset = -1
+    let dataLength = 0
+    while (offset + 8 <= view.byteLength) {
+      const id = view.getUint32(offset, false)
+      const size = view.getUint32(offset + 4, true)
+      const body = offset + 8
+      if (id === 0x666d7420) { // 'fmt '
+        format = {
+          code: view.getUint16(body, true),
+          channels: view.getUint16(body + 2, true),
+          sampleRate: view.getUint32(body + 4, true),
+          bits: view.getUint16(body + 14, true),
+        }
+      } else if (id === 0x64617461) { // 'data'
+        dataOffset = body
+        dataLength = size
+      }
+      offset = body + size + (size % 2)
+    }
+    if (!format || dataOffset < 0) return null
+    if (format.code !== 1 || format.bits !== 16 || !format.channels) return null
+    const available = Math.min(dataLength, view.byteLength - dataOffset)
+    const frames = Math.floor(available / (2 * format.channels))
+    if (frames <= 0) return null
+    const channels = []
+    for (let c = 0; c < format.channels; c += 1) channels.push(new Float32Array(frames))
+    for (let i = 0; i < frames; i += 1) {
+      for (let c = 0; c < format.channels; c += 1) {
+        channels[c][i] = view.getInt16(dataOffset + (i * format.channels + c) * 2, true) / 32768
+      }
+    }
+    return { channels, sampleRate: format.sampleRate }
   } catch {
-    analyser = null
-    activeLevelCallback = null
-    onLevel(0)
+    return null
+  }
+}
+
+async function decodeEnvelopeFromArrayBuffer(buffer) {
+  const wav = parseWavChannels(buffer)
+  if (wav) return envelopeFromChannels(wav.channels, wav.sampleRate)
+  // Not PCM WAV (the bundled clips are Ogg Vorbis). OfflineAudioContext decodes
+  // without ever opening the audio device or disturbing the playback session.
+  const Ctor = window.OfflineAudioContext || window.webkitOfflineAudioContext
+  if (!Ctor) return null
+  const ctx = new Ctor(1, 1, 44100)
+  const decoded = await ctx.decodeAudioData(buffer.slice(0))
+  const channels = []
+  for (let c = 0; c < decoded.numberOfChannels; c += 1) channels.push(decoded.getChannelData(c))
+  return envelopeFromChannels(channels, decoded.sampleRate)
+}
+
+function startEnvelopeLipSync(audio, frames, onLevel) {
+  if (!frames?.length || typeof requestAnimationFrame !== 'function') return false
+  envelope = frames
+  activeLevelCallback = onLevel
+  const tick = () => {
+    if (!envelope || activeAudio !== audio) { onLevel(0); return }
+    if (audio.ended) { stopAnalyser(onLevel); return }
+    if (audio.paused) { analyserFrame = requestAnimationFrame(tick); return }
+    const index = Math.floor(Number(audio.currentTime || 0) * ENVELOPE_FPS)
+    onLevel(envelope[Math.max(0, Math.min(envelope.length - 1, index))] || 0)
+    analyserFrame = requestAnimationFrame(tick)
+  }
+  tick()
+  return true
+}
+
+/* Fire-and-forget: playback has already started by the time this resolves, and a
+   failure just means no mouth movement. */
+async function attachEnvelope(audio, source, onLevel) {
+  if (!onLevel || !source) return false
+  try {
+    let buffer = null
+    if (source.blob) buffer = await source.blob.arrayBuffer()
+    else if (typeof fetch === 'function') buffer = await (await fetch(source.url)).arrayBuffer()
+    if (!buffer || activeAudio !== audio) return false
+    const frames = await decodeEnvelopeFromArrayBuffer(buffer)
+    if (!frames || activeAudio !== audio) return false
+    const started = startEnvelopeLipSync(audio, frames, onLevel)
+    if (started) voiceDiagnostic('LIPSYNC', 'OK', `${frames.length} frames @ ${ENVELOPE_FRAME_MS}ms`)
+    return started
+  } catch (error) {
+    voiceDiagnostic('LIPSYNC', 'SKIP', error?.message || 'decode failed')
     return false
   }
 }
@@ -152,6 +235,7 @@ export async function playAudioUrl(url, {
   onEnd = null,
   objectUrl = false,
   fallbackBlob = null,
+  envelopeSource = null,
 } = {}) {
   stopVoicePlayback('replaced')
   if (!url) {
@@ -226,13 +310,13 @@ export async function playAudioUrl(url, {
     audio.playsInline = true
     attach(audio)
     audio.src = dataUrl
-    const nowLipsync = monitor(audio, onLevel)
+    void attachEnvelope(audio, envelopeSource, onLevel)
     try {
       await audio.play()
       const durationSec = Number.isFinite(audio.duration) ? audio.duration : 0
       armWatchdog(durationSec)
-      voiceDiagnostic('PLAY', 'OK', `data URL${nowLipsync ? ' + lipsync' : ''}`)
-      onStart?.({ audio, durationSec, lipsyncActive: nowLipsync, dataUrlFallback: true })
+      voiceDiagnostic('PLAY', 'OK', 'data URL')
+      onStart?.({ audio, durationSec, lipsyncActive: false, dataUrlFallback: true })
       return true
     } catch (error) {
       voiceDiagnostic('PLAY', 'FAIL', `data URL ${error?.message || error}`)
@@ -253,7 +337,10 @@ export async function playAudioUrl(url, {
 
   attach(audio)
 
-  const lipsyncActive = monitor(audio, onLevel)
+  // Playback first, mouth second: the envelope is decoded in the background and
+  // must never sit between the user and the audio.
+  const lipsyncActive = false
+  void attachEnvelope(audio, envelopeSource, onLevel)
   voiceDiagnostic('PLAY', 'WORK', objectUrl ? 'blob URL' : 'bundled media')
   try {
     await audio.play()
@@ -278,7 +365,7 @@ export async function playReferenceVoice(id, opts = {}) {
     opts.onEnd?.({ failed: true, reason: 'unknown-reference-voice' })
     return { played: false, entry: null }
   }
-  const result = await playAudioUrl(getVoiceAudioUrl(id), opts)
+  const result = await playAudioUrl(getVoiceAudioUrl(id), { ...opts, envelopeSource: { url: getVoiceAudioUrl(id) } })
   return { ...result, entry }
 }
 
@@ -289,5 +376,11 @@ export async function playAudioBlob(blob, opts = {}) {
     opts.onEnd?.({ failed: true, reason: 'empty-audio-blob' })
     return { played: false, error: new Error('empty TTS audio') }
   }
-  return playAudioUrl(URL.createObjectURL(blob), { ...opts, objectUrl: true, fallbackBlob: blob })
+  return playAudioUrl(URL.createObjectURL(blob), {
+    ...opts,
+    objectUrl: true,
+    fallbackBlob: blob,
+    // The WAV bytes are already in hand, so the mouth does not need a refetch.
+    envelopeSource: { blob },
+  })
 }
