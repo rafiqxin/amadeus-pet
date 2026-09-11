@@ -11,12 +11,16 @@ assert.match(scrollSource, /const next = Math\.max\(0, Math\.min\(max, thumbDrag
 assert.match(scrollSource, /el\.scrollTop = next/,
   'thumb drag must write the calculated value to the transcript scrollTop')
 assert.match(scrollSource, /thumb\.addEventListener\('pointerdown'/)
-assert.match(scrollSource, /window\.addEventListener\('pointermove', onWindowPointerMove/,
-  'pointer drag ownership must continue at window level outside the narrow thumb')
-assert.match(scrollSource, /thumb\.addEventListener\('touchstart', onThumbTouchStart/,
-  'WKWebView must have an explicit touch-start fallback on the real thumb')
-assert.match(scrollSource, /window\.addEventListener\('touchmove', onWindowTouchMove/,
-  'WKWebView touch drag ownership must continue at window level')
+assert.match(scrollSource, /document\.addEventListener\('pointerdown', onDocumentPointerDown, \{ capture: true, passive: false \}\)/,
+  'WKWebView thumb ownership must begin from document capture, not only the narrow thumb target')
+assert.match(scrollSource, /document\.addEventListener\('touchstart', onDocumentTouchStart, \{ capture: true, passive: false \}\)/,
+  'WKWebView touch-start fallback must begin from document capture using geometry hit-testing')
+assert.match(scrollSource, /window\.addEventListener\('pointermove', onWindowPointerMove, \{ capture: true, passive: false \}\)/,
+  'pointer drag ownership must continue at window capture level')
+assert.match(scrollSource, /window\.addEventListener\('touchmove', onWindowTouchMove, \{ capture: true, passive: false \}\)/,
+  'touch drag ownership must continue at window capture level')
+assert.match(scrollSource, /const padX = Math\.max\(8, \(44 - rect\.width\) \/ 2\)/,
+  'visible thumb must retain a finger-sized invisible hit target without changing the UI')
 
 let playCalls = 0
 class SuspendedAudioContext {
@@ -58,5 +62,5 @@ assert.equal(result.played, true)
 assert.equal(result.lipsyncActive, false)
 stopVoicePlayback('unit-test-finished')
 
-console.log('PASS custom CALL thumb window-level pointer/touch contract')
+console.log('PASS custom CALL thumb document-capture pointer/touch contract')
 console.log('PASS media playback remains independent from suspended WebAudio')

@@ -82,13 +82,13 @@ export function mountIosCallTranscriptScroll(root = document) {
   }
 
   const onTouchStart = (event) => {
-    if (event.touches?.length !== 1) return
+    if (event.touches?.length !== 1 || thumbDrag) return
     touchY = event.touches[0].clientY
     touchTop = el.scrollTop
   }
 
   const onTouchMove = (event) => {
-    if (touchY == null || event.touches?.length !== 1 || !scrollable()) return
+    if (thumbDrag || touchY == null || event.touches?.length !== 1 || !scrollable()) return
     const delta = touchY - event.touches[0].clientY
     const max = maxScroll()
     const next = Math.max(0, Math.min(max, touchTop + delta))
@@ -106,8 +106,23 @@ export function mountIosCallTranscriptScroll(root = document) {
       y: clientY,
       scrollTop: el.scrollTop,
     }
+    touchY = null
     thumb.classList.add('dragging')
     return true
+  }
+
+  function thumbHit(clientX, clientY) {
+    if (!scrollable()) return false
+    const rect = thumb.getBoundingClientRect()
+    // Keep the visible chrome unchanged but give a finger-sized invisible hit
+    // target. This also survives WKWebView resolving the initial DOM target to
+    // an ancestor instead of the narrow 14 px thumb itself.
+    const padX = Math.max(8, (44 - rect.width) / 2)
+    const padY = Math.max(8, (44 - rect.height) / 2)
+    return clientX >= rect.left - padX
+      && clientX <= rect.right + padX
+      && clientY >= rect.top - padY
+      && clientY <= rect.bottom + padY
   }
 
   function moveThumbDrag(clientY) {
@@ -119,7 +134,7 @@ export function mountIosCallTranscriptScroll(root = document) {
     if (next !== el.scrollTop) {
       el.scrollTop = next
       // Do not rely only on a later native scroll event. Updating immediately
-      // keeps the visual thumb and the test/diagnostic state in lock-step.
+      // keeps the visual thumb and diagnostic state in lock-step.
       updateThumb()
     }
   }
@@ -131,32 +146,54 @@ export function mountIosCallTranscriptScroll(root = document) {
     thumb.classList.remove('dragging')
   }
 
-  const onThumbDown = (event) => {
-    if (!beginThumbDrag({ kind: 'pointer', id: event.pointerId, clientY: event.clientY })) return
+  function ownPointerDown(event) {
+    if (thumbDrag || !thumbHit(event.clientX, event.clientY)) return false
+    if (!beginThumbDrag({ kind: 'pointer', id: event.pointerId, clientY: event.clientY })) return false
     try { thumb.setPointerCapture?.(event.pointerId) } catch {}
     event.preventDefault()
     event.stopPropagation()
+    return true
   }
 
-  // Pointer capture on a tiny element is not sufficiently reliable in iOS
-  // WKWebView. Own move/up at window level as well so the drag continues when
-  // the finger leaves the visual thumb or WebKit declines pointer capture.
+  const onDocumentPointerDown = (event) => { ownPointerDown(event) }
+  const onThumbDown = (event) => {
+    if (thumbDrag) {
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+    ownPointerDown(event)
+  }
+
+  // Capture at window/document level. On iOS WKWebView the native gesture
+  // recognizer can resolve a touch that visually lands on the thumb to an
+  // ancestor node. Geometry-based capture means the thumb still owns the drag.
   const onWindowPointerMove = (event) => {
     if (!thumbDrag || thumbDrag.kind !== 'pointer' || thumbDrag.id !== event.pointerId) return
     moveThumbDrag(event.clientY)
     event.preventDefault()
+    event.stopPropagation()
   }
   const onWindowPointerUp = (event) => finishThumbDrag('pointer', event.pointerId)
 
-  // Real touch fallback for WKWebView versions where the synthesized pointer
-  // stream is interrupted. This is intentionally separate from transcript
-  // pan scrolling: it starts only when the finger goes down on the thumb.
-  const onThumbTouchStart = (event) => {
-    if (thumbDrag || event.touches?.length !== 1) return
+  function ownTouchStart(event) {
+    if (thumbDrag || event.touches?.length !== 1) return false
     const touch = event.touches[0]
-    if (!beginThumbDrag({ kind: 'touch', id: touch.identifier, clientY: touch.clientY })) return
+    if (!thumbHit(touch.clientX, touch.clientY)) return false
+    if (!beginThumbDrag({ kind: 'touch', id: touch.identifier, clientY: touch.clientY })) return false
     event.preventDefault()
     event.stopPropagation()
+    return true
+  }
+
+  const onDocumentTouchStart = (event) => { ownTouchStart(event) }
+  const onThumbTouchStart = (event) => {
+    if (thumbDrag) {
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+    ownTouchStart(event)
   }
   const onWindowTouchMove = (event) => {
     if (!thumbDrag || thumbDrag.kind !== 'touch') return
@@ -164,6 +201,7 @@ export function mountIosCallTranscriptScroll(root = document) {
     if (!touch) return
     moveThumbDrag(touch.clientY)
     event.preventDefault()
+    event.stopPropagation()
   }
   const onWindowTouchEnd = (event) => {
     if (!thumbDrag || thumbDrag.kind !== 'touch') return
@@ -172,7 +210,7 @@ export function mountIosCallTranscriptScroll(root = document) {
   }
 
   const onTrackDown = (event) => {
-    if (event.target === thumb || !scrollable()) return
+    if (thumbDrag || event.target === thumb || !scrollable()) return
     const rect = track.getBoundingClientRect()
     const ratio = Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)))
     el.scrollTop = ratio * maxScroll()
@@ -200,12 +238,14 @@ export function mountIosCallTranscriptScroll(root = document) {
   thumb.addEventListener('pointerdown', onThumbDown, { passive: false })
   thumb.addEventListener('touchstart', onThumbTouchStart, { passive: false })
   track.addEventListener('pointerdown', onTrackDown, { passive: false })
-  window.addEventListener('pointermove', onWindowPointerMove, { passive: false })
-  window.addEventListener('pointerup', onWindowPointerUp, { passive: true })
-  window.addEventListener('pointercancel', onWindowPointerUp, { passive: true })
-  window.addEventListener('touchmove', onWindowTouchMove, { passive: false })
-  window.addEventListener('touchend', onWindowTouchEnd, { passive: true })
-  window.addEventListener('touchcancel', onWindowTouchEnd, { passive: true })
+  document.addEventListener('pointerdown', onDocumentPointerDown, { capture: true, passive: false })
+  document.addEventListener('touchstart', onDocumentTouchStart, { capture: true, passive: false })
+  window.addEventListener('pointermove', onWindowPointerMove, { capture: true, passive: false })
+  window.addEventListener('pointerup', onWindowPointerUp, { capture: true, passive: true })
+  window.addEventListener('pointercancel', onWindowPointerUp, { capture: true, passive: true })
+  window.addEventListener('touchmove', onWindowTouchMove, { capture: true, passive: false })
+  window.addEventListener('touchend', onWindowTouchEnd, { capture: true, passive: true })
+  window.addEventListener('touchcancel', onWindowTouchEnd, { capture: true, passive: true })
   window.addEventListener('resize', scheduleRefresh)
   refresh()
 
@@ -222,12 +262,14 @@ export function mountIosCallTranscriptScroll(root = document) {
     thumb.removeEventListener('pointerdown', onThumbDown)
     thumb.removeEventListener('touchstart', onThumbTouchStart)
     track.removeEventListener('pointerdown', onTrackDown)
-    window.removeEventListener('pointermove', onWindowPointerMove)
-    window.removeEventListener('pointerup', onWindowPointerUp)
-    window.removeEventListener('pointercancel', onWindowPointerUp)
-    window.removeEventListener('touchmove', onWindowTouchMove)
-    window.removeEventListener('touchend', onWindowTouchEnd)
-    window.removeEventListener('touchcancel', onWindowTouchEnd)
+    document.removeEventListener('pointerdown', onDocumentPointerDown, true)
+    document.removeEventListener('touchstart', onDocumentTouchStart, true)
+    window.removeEventListener('pointermove', onWindowPointerMove, true)
+    window.removeEventListener('pointerup', onWindowPointerUp, true)
+    window.removeEventListener('pointercancel', onWindowPointerUp, true)
+    window.removeEventListener('touchmove', onWindowTouchMove, true)
+    window.removeEventListener('touchend', onWindowTouchEnd, true)
+    window.removeEventListener('touchcancel', onWindowTouchEnd, true)
     window.removeEventListener('resize', scheduleRefresh)
     track.remove()
   }
