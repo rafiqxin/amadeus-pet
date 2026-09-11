@@ -124,6 +124,7 @@ jobs:
         run: |
           node tests/ios-runtime-contract.mjs
           node tests/ios-ui-audio-contract.mjs
+          node tests/ios-sheet-reachability-contract.mjs
           node tests/tts-transport-contract.mjs
 
       - name: Verify iOS voice and interaction source contracts

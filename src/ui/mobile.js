@@ -109,6 +109,10 @@ export function mountMobileUi(root, hooks = {}) {
     shell.classList.add('sheet-open')
     sheet.classList.add('open')
     sheet.setAttribute('aria-hidden', 'false')
+    // A sheet always opens at its top. The sheets scroll now, and the CONNECTION
+    // sheet's diagnostics line is rewritten by voice events even while it is
+    // closed, which could leave it opened somewhere in the middle.
+    sheet.scrollTop = 0
   }
 
   function loadApiFields() {

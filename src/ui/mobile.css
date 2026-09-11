@@ -83,6 +83,24 @@ body.mobile-ios .mobile-sheet {
   transform: translateY(105%);
   transition: transform .24s cubic-bezier(.2,.75,.25,1);
   pointer-events: auto;
+  /* The CONNECTION sheet's content is taller than max-height: four fields plus
+     status, diagnostics and the action row measure 601px against a 477px box at
+     393x852. With the default `overflow: visible` the surplus spilled past the
+     bottom of the screen: the action row sat at y 879..923 against an 883px
+     viewport, so 清除/保存/保存并测试 were unreachable and the sheet could be filled
+     in but never submitted. Making the sheet scroll is what lets the fields above
+     the row be brought into view. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  /* The voice diagnostics line is rewritten on every CONNECT/PLAY/END event,
+     even while this sheet is closed and translated off-screen. A content change
+     inside an off-screen scroll container is the kind of thing scroll anchoring
+     reacts to, so it is disabled here and openSheet() also pins scrollTop to 0.
+     Together they hold "a sheet opens showing its header" no matter what the
+     voice flow wrote while it was closed. */
+  overflow-anchor: none;
 }
 
 body.mobile-ios .mobile-sheet.open {
@@ -337,6 +355,26 @@ body.mobile-ios .mobile-dock-btn {
 /* API sheet gets three explicit actions without crowding narrow screens. */
 body.mobile-ios .mobile-api-actions {
   grid-template-columns: .72fr .88fr 1.4fr;
+}
+
+/* Keep the confirm row reachable at every scroll position, including while the
+   keyboard is up and the sheet is squeezed. It sticks 18px above the sheet's
+   bottom edge, which is exactly where it already rests when fully scrolled, so
+   the resting layout is unchanged. The fade matches the sheet's own bottom
+   gradient rather than introducing a new bar. */
+body.mobile-ios .mobile-api-sheet .mobile-api-actions {
+  position: sticky;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  z-index: 2;
+  padding-top: 14px;
+  /* The fade occupies exactly the 14px padding band, so the buttons sit on a
+     fully opaque surface and scrolled field text never shows through them. */
+  background: linear-gradient(
+    180deg,
+    rgba(6, 6, 5, 0) 0,
+    rgba(6, 6, 5, 0.97) 14px,
+    rgba(6, 6, 5, 0.99) 100%
+  );
 }
 
 /* Native speech feedback */
