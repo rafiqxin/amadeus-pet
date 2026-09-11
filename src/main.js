@@ -43,6 +43,9 @@ async function boot() {
   let app = null
   let pet = null
   let consoleOpen = false
+  // `busy` protects an LLM/voice reply. Touch clips themselves do NOT own this
+  // lock: a new tap is allowed to interrupt the previous OGG and choose the next
+  // item from the 45-clip shuffle bag, matching desktop main behaviour.
   let busy = false
 
   function viewportSize() {
@@ -59,10 +62,14 @@ async function boot() {
   }
   function setMouth(level) { app?.setMouthOpen?.(level) }
 
-  function presentLine(text, { log = true, rine = true } = {}) {
+  function presentLine(text, { log = true, rine = true, durationMs = 0 } = {}) {
     const line = String(text || '').trim()
     if (!line) return
-    if (!consoleOpen) bubble.say(line, Math.max(2600, Math.min(14000, line.length * 220)))
+    const estimated = Math.max(2600, Math.min(14000, line.length * 220))
+    const holdMs = Number(durationMs) > 0
+      ? Math.max(900, Math.min(30000, Number(durationMs) + 260))
+      : estimated
+    if (!consoleOpen) bubble.say(line, holdMs)
     if (log) hud.aiLog(line)
     hud.setCallSubtitle(line)
     if (rine) hud.rineHer(line, { read: true, quick: true })
@@ -75,22 +82,22 @@ async function boot() {
 
   async function playTouch(hit) {
     if (!pet || busy || settings.get('voice') === false) return
-    busy = true
-    try {
-      const reaction = nextTouchReaction(hit?.area || 'body')
-      applyReaction(pet, reaction, { playMotion: true })
+    const reaction = nextTouchReaction(hit?.area || 'body')
+    applyReaction(pet, reaction, { playMotion: true })
+
+    const result = await playReferenceVoice(reaction.voice, {
+      onLevel: setMouth,
+      onStart: ({ durationSec = 0 } = {}) => {
+        presentLine(reaction.text, {
+          log: false,
+          rine: false,
+          durationMs: durationSec > 0 ? durationSec * 1000 : 0,
+        })
+      },
+      onEnd: () => hud.setCallSubtitle(''),
+    })
+    if (!result.played) {
       presentLine(reaction.text, { log: false, rine: false })
-      let resolveEnd
-      const ended = new Promise((resolve) => { resolveEnd = resolve })
-      const result = await playReferenceVoice(reaction.voice, {
-        onLevel: setMouth,
-        onEnd: () => resolveEnd(),
-      })
-      if (result.played) await ended
-      else setMouth(0)
-      await wait(180)
-    } finally {
-      busy = false
       setMouth(0)
     }
   }
@@ -106,20 +113,41 @@ async function boot() {
     if (settings.get('voice') === false) {
       presentLine(line, { log: false, rine: false })
       await wait(Math.max(2200, Math.min(12000, line.length * 210)))
+      hud.setCallSubtitle('')
       return
     }
 
     let resolveEnd
     const ended = new Promise((resolve) => { resolveEnd = resolve })
     let started = false
+    let segmentDriven = false
     const route = await routeAndSpeak(line, {
       classify: classifyReferenceVoice,
       translateTts: translateForKurisuTts,
       mood: reaction.emotion,
       onLevel: setMouth,
-      onStart: () => {
+      // OGG replies have no segment callback, so they use the whole visible line.
+      onStart: ({ durationSec = 0 } = {}) => {
         started = true
-        presentLine(line, { log: false, rine: false })
+        if (!segmentDriven) {
+          presentLine(line, {
+            log: false,
+            rine: false,
+            durationMs: durationSec > 0 ? durationSec * 1000 : 0,
+          })
+        }
+      },
+      // TTS is sentence-sized on iOS. Show exactly the Chinese source segment
+      // whose Japanese WAV has begun, rather than exposing the entire paragraph
+      // while only its first sentence is being spoken.
+      onSegmentStart: ({ text: segmentText, durationSec = 0 }) => {
+        segmentDriven = true
+        started = true
+        presentLine(segmentText, {
+          log: false,
+          rine: false,
+          durationMs: durationSec > 0 ? durationSec * 1000 : 0,
+        })
       },
       onEnd: () => resolveEnd(),
     })
@@ -127,12 +155,13 @@ async function boot() {
     if (route.played) {
       if (!started) presentLine(line, { log: false, rine: false })
       await ended
-      await wait(300)
+      await wait(220)
     } else {
       presentLine(line, { log: false, rine: false })
       hud.sysLog(route.error ? `语音回退为文字：${route.error}` : '语音回退为文字')
       await wait(Math.max(2200, Math.min(14000, line.length * 220)))
     }
+    hud.setCallSubtitle('')
     setMouth(0)
   }
 
@@ -243,6 +272,7 @@ async function boot() {
   } finally {
     busy = false
     setMouth(0)
+    hud.setCallSubtitle('')
   }
 
   if (usingRemoteApi()) {
