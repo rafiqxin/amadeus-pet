@@ -1,13 +1,22 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
-// These remain fast unit tests only. Real WKWebView interaction lives in
-// ios-tests/ and is executed on an iOS Simulator by GitHub Actions.
+// These remain fast unit/source-contract tests only. Real WKWebView interaction
+// lives in ios-tests/ and is executed on an iOS Simulator by GitHub Actions.
 const scrollSource = fs.readFileSync(new URL('../src/ui/ios-call-scroll.js', import.meta.url), 'utf8')
 assert.match(scrollSource, /call-scroll-track/)
 assert.match(scrollSource, /call-scroll-thumb/)
-assert.match(scrollSource, /el\.scrollTop = Math\.max/)
+assert.match(scrollSource, /const next = Math\.max\(0, Math\.min\(max, thumbDrag\.scrollTop/,
+  'thumb drag must calculate a bounded scrollTop from the drag origin')
+assert.match(scrollSource, /el\.scrollTop = next/,
+  'thumb drag must write the calculated value to the transcript scrollTop')
 assert.match(scrollSource, /thumb\.addEventListener\('pointerdown'/)
+assert.match(scrollSource, /window\.addEventListener\('pointermove', onWindowPointerMove/,
+  'pointer drag ownership must continue at window level outside the narrow thumb')
+assert.match(scrollSource, /thumb\.addEventListener\('touchstart', onThumbTouchStart/,
+  'WKWebView must have an explicit touch-start fallback on the real thumb')
+assert.match(scrollSource, /window\.addEventListener\('touchmove', onWindowTouchMove/,
+  'WKWebView touch drag ownership must continue at window level')
 
 let playCalls = 0
 class SuspendedAudioContext {
@@ -49,5 +58,5 @@ assert.equal(result.played, true)
 assert.equal(result.lipsyncActive, false)
 stopVoicePlayback('unit-test-finished')
 
-console.log('PASS custom CALL thumb source contract')
+console.log('PASS custom CALL thumb window-level pointer/touch contract')
 console.log('PASS media playback remains independent from suspended WebAudio')
