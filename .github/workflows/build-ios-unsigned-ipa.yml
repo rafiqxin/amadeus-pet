@@ -74,6 +74,19 @@ jobs:
         run: |
           set -euo pipefail
           brew install xcodegen
+
+          # The TTS transport test drives a mock server on 9882. The archived
+          # build-ios-call-preview.yml started this; running the whole suite here
+          # without it made that one test fail on HEALTH-FAIL for no real reason.
+          node tests/tts-mock-server.mjs > /tmp/amadeus-mock-tts.log 2>&1 &
+          MOCK_PID=$!
+          trap 'kill "$MOCK_PID" >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:9882/health >/dev/null 2>&1; then break; fi
+            sleep 0.5
+          done
+          curl -sf http://127.0.0.1:9882/health >/dev/null || { echo 'mock TTS server did not start'; cat /tmp/amadeus-mock-tts.log; exit 1; }
+
           SIM_UDID=$(xcrun simctl list devices available -j | python3 -c '
           import json,sys
           data=json.load(sys.stdin)
