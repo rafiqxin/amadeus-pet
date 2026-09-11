@@ -5,6 +5,34 @@ import fs from 'node:fs'
 // lives in ios-tests/ and is executed on an iOS Simulator by GitHub Actions.
 const scrollSource = fs.readFileSync(new URL('../src/ui/ios-call-scroll.js', import.meta.url), 'utf8')
 const scrollCss = fs.readFileSync(new URL('../src/ui/ios-call-fixes.css', import.meta.url), 'utf8')
+const mainJs = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
+
+// The reply text must appear WITH its audio, not before it. Synthesis takes
+// seconds (translate -> synthesise -> decode), so rendering as soon as the LLM
+// answered put the text on screen ~11s ahead of the voice, and the voice then
+// read out something the reader had already finished. Measured after the fix:
+//   t=0      waiting indicator
+//   t=4663   translate done
+//   t=11643  synth done
+//   t=11653  audio started AND reply text shown
+{
+  const start = mainJs.indexOf('async function speakReply')
+  const end = mainJs.indexOf('async function brain')
+  assert.ok(start > 0 && end > start, 'speakReply must exist in src/main.js')
+  const speakReply = mainJs.slice(start, end)
+  const voiceBranch = speakReply.indexOf("if (settings.get('voice') === false)")
+  assert.ok(voiceBranch > 0, 'speakReply must branch on the voice setting')
+  assert.doesNotMatch(speakReply.slice(0, voiceBranch), /presentLine\(line/,
+    'the reply must not be rendered before the voice setting is even consulted; deferring it is the point')
+  assert.match(speakReply, /const showLine = \(\) => presentLine\(line/,
+    'showLine must be the deferred renderer')
+  assert.match(speakReply, /onStart: showLine/,
+    'the single-shot audio path must reveal the text when playback starts')
+  assert.match(speakReply, /onSegmentStart: showLine/,
+    'the chunked path must reveal the text on its first segment, not before synthesis')
+  assert.match(speakReply.slice(voiceBranch, speakReply.indexOf('await routeAndSpeak')), /presentLine\(line/,
+    'with voice disabled the text must still be shown immediately')
+}
 assert.match(scrollSource, /ama-transcript-scroll/,
   'the transcript must still report its scroll state')
 assert.match(scrollSource, /el\.dataset\.scrollable/,

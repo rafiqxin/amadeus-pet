@@ -230,13 +230,21 @@ async function boot() {
     applyReaction(pet, reaction, { playMotion: true })
     hud.aiLog(line)
     hud.rineHer(line, { read: true, quick: true })
-    presentLine(line, { log: false, rine: false })
 
     if (settings.get('voice') === false) {
+      presentLine(line, { log: false, rine: false })
       await wait(Math.max(2200, Math.min(12000, line.length * 210)))
       hud.setCallSubtitle('')
       return
     }
+
+    /* Hold the reply back until its audio is ready.
+       Synthesis takes seconds (translate -> synthesise -> decode), so showing the
+       text the moment the LLM answered put it on screen long before the voice,
+       and the voice then read out something the reader had already finished. The
+       waiting indicator from thinking() stays up for the whole generation, and
+       the line appears on the frame the audio actually starts. */
+    const showLine = () => presentLine(line, { log: false, rine: false })
 
     let resolveEnd
     const ended = new Promise((resolve) => { resolveEnd = resolve })
@@ -245,7 +253,8 @@ async function boot() {
       translateTts: translateForKurisuTts,
       mood: reaction.emotion,
       onLevel: setMouth,
-      onStart: () => {},
+      onStart: showLine,
+      onSegmentStart: showLine,
       onEnd: (meta) => resolveEnd(meta),
     })
 
@@ -253,6 +262,8 @@ async function boot() {
       await ended
       await wait(220)
     } else {
+      // No audio: the text is all the user gets, so surface it with the reason.
+      showLine()
       hud.sysLog(route.error ? `语音回退为文字：${route.error}` : '语音回退为文字')
       await wait(Math.max(2200, Math.min(14000, line.length * 220)))
     }
