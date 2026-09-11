@@ -1,12 +1,11 @@
 /* iOS CALL transcript scroller.
    Keeps the established CALL box but adds a real, visible track/thumb whose
-   position is bound bidirectionally to scrollTop. Native touch scrolling still
-   works; the thumb is an explicit fallback and direct-manipulation affordance. */
+   position is bound bidirectionally to scrollTop. The scrollbar is portaled to
+   document.body so it is not trapped beneath HUD ancestors with pointer-events:none. */
 
 export function mountIosCallTranscriptScroll(root = document) {
   const el = root?.querySelector?.('.call-subtitle') || document.querySelector('.call-subtitle')
-  if (!el || !el.parentElement) return () => {}
-  const host = el.parentElement
+  if (!el) return () => {}
 
   const track = document.createElement('div')
   track.className = 'call-scroll-track'
@@ -14,7 +13,7 @@ export function mountIosCallTranscriptScroll(root = document) {
   const thumb = document.createElement('div')
   thumb.className = 'call-scroll-thumb'
   track.appendChild(thumb)
-  host.appendChild(track)
+  document.body.appendChild(track)
 
   let touchY = null
   let touchTop = 0
@@ -35,10 +34,11 @@ export function mountIosCallTranscriptScroll(root = document) {
 
   function positionTrack() {
     const rect = el.getBoundingClientRect()
-    const hostRect = host.getBoundingClientRect()
     const inset = 8
-    track.style.left = `${Math.max(0, rect.right - hostRect.left - 11)}px`
-    track.style.top = `${Math.max(0, rect.top - hostRect.top + inset)}px`
+    // The real hit-test box is 44 px wide. Its visual 6 px rail is centered at
+    // +22 px, preserving the previous screen-space rail center (rect.right - 8).
+    track.style.left = `${Math.max(0, rect.right - 30)}px`
+    track.style.top = `${Math.max(0, rect.top + inset)}px`
     track.style.height = `${Math.max(28, rect.height - inset * 2)}px`
   }
 
@@ -114,10 +114,7 @@ export function mountIosCallTranscriptScroll(root = document) {
   function thumbHit(clientX, clientY) {
     if (!scrollable()) return false
     const rect = thumb.getBoundingClientRect()
-    // Keep the visible chrome unchanged but give a finger-sized invisible hit
-    // target. This also survives WKWebView resolving the initial DOM target to
-    // an ancestor instead of the narrow 14 px thumb itself.
-    const padX = Math.max(8, (44 - rect.width) / 2)
+    const padX = Math.max(0, (44 - rect.width) / 2)
     const padY = Math.max(8, (44 - rect.height) / 2)
     return clientX >= rect.left - padX
       && clientX <= rect.right + padX
@@ -133,8 +130,6 @@ export function mountIosCallTranscriptScroll(root = document) {
     const next = Math.max(0, Math.min(max, thumbDrag.scrollTop + (delta / travel) * max))
     if (next !== el.scrollTop) {
       el.scrollTop = next
-      // Do not rely only on a later native scroll event. Updating immediately
-      // keeps the visual thumb and diagnostic state in lock-step.
       updateThumb()
     }
   }
@@ -165,9 +160,6 @@ export function mountIosCallTranscriptScroll(root = document) {
     ownPointerDown(event)
   }
 
-  // Capture at window/document level. On iOS WKWebView the native gesture
-  // recognizer can resolve a touch that visually lands on the thumb to an
-  // ancestor node. Geometry-based capture means the thumb still owns the drag.
   const onWindowPointerMove = (event) => {
     if (!thumbDrag || thumbDrag.kind !== 'pointer' || thumbDrag.id !== event.pointerId) return
     moveThumbDrag(event.clientY)
@@ -226,7 +218,6 @@ export function mountIosCallTranscriptScroll(root = document) {
   if (typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(scheduleRefresh)
     resizeObserver.observe(el)
-    resizeObserver.observe(host)
   }
 
   el.addEventListener('scroll', updateThumb, { passive: true })

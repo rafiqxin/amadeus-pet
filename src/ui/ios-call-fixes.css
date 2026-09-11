@@ -32,21 +32,33 @@ body.mobile-ios.console-open.call-mode .call-subtitle::-webkit-scrollbar {
   height: 0;
 }
 
-/* A real scroll control, not a styled system overlay scrollbar. JS positions
-   this track against the current CALL subtitle rectangle so the retained visual
-   layout can keep changing across iPhone sizes without hard-coded coordinates. */
+/* The actual hit-test elements are finger-sized (44 px) so WKWebView's native
+   gesture recognizer consistently targets an element with touch-action:none.
+   ::before/::after draw the exact old 6 px rail + 14 px amber thumb, therefore
+   the visible CALL layout does not change. */
 body.mobile-ios.console-open.call-mode .call-scroll-track {
   position: absolute;
   z-index: 78;
-  width: 6px;
+  width: 44px;
   min-height: 28px;
   border-radius: 999px;
-  background: rgba(255,255,255,.08);
-  box-shadow: inset 0 0 0 1px rgba(224,151,17,.12);
+  background: transparent;
   opacity: 0;
   pointer-events: none;
   transition: opacity .18s ease;
   touch-action: none;
+}
+body.mobile-ios.console-open.call-mode .call-scroll-track::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 19px;
+  width: 6px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  box-shadow: inset 0 0 0 1px rgba(224,151,17,.12);
+  pointer-events: none;
 }
 body.mobile-ios.console-open.call-mode .call-scroll-track.show {
   opacity: 1;
@@ -55,16 +67,27 @@ body.mobile-ios.console-open.call-mode .call-scroll-track.show {
 body.mobile-ios.console-open.call-mode .call-scroll-thumb {
   position: absolute;
   top: 0;
-  left: -4px;
-  width: 14px;
+  left: 0;
+  width: 44px;
   min-height: 28px;
   border-radius: 999px;
-  background: rgba(232,168,56,.88);
-  box-shadow: 0 0 10px rgba(232,168,56,.30), inset 0 0 0 1px rgba(255,235,190,.28);
+  background: transparent;
   pointer-events: auto;
   touch-action: none;
 }
-body.mobile-ios.console-open.call-mode .call-scroll-thumb.dragging {
+body.mobile-ios.console-open.call-mode .call-scroll-thumb::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 15px;
+  width: 14px;
+  border-radius: 999px;
+  background: rgba(232,168,56,.88);
+  box-shadow: 0 0 10px rgba(232,168,56,.30), inset 0 0 0 1px rgba(255,235,190,.28);
+  pointer-events: none;
+}
+body.mobile-ios.console-open.call-mode .call-scroll-thumb.dragging::after {
   background: rgba(255,190,74,.98);
   box-shadow: 0 0 15px rgba(232,168,56,.48), inset 0 0 0 1px rgba(255,245,220,.40);
 }
