@@ -21,12 +21,7 @@ function stopAnalyser(onLevel = activeLevelCallback) {
   onLevel?.(0)
 }
 
-/**
- * Prime/resume WebAudio from a real user gesture.  iOS may otherwise keep the
- * AudioContext suspended even though HTMLMediaElement playback itself is legal.
- * If WebAudio cannot run we deliberately leave the media element outside the
- * graph so the device still produces audible character speech.
- */
+/** Prime WebAudio while a real user gesture is still active. */
 export async function unlockVoiceAudio() {
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext
   if (!AudioContextCtor) return false
@@ -46,14 +41,21 @@ export async function unlockVoiceAudio() {
   }
 }
 
-async function monitor(audio, onLevel) {
+/*
+ * Lip sync must never be allowed to gate sound output on iOS.  The previous
+ * implementation awaited AudioContext resume and graph creation before calling
+ * HTMLMediaElement.play(); after LLM/TTS latency that extra async boundary could
+ * lose the WKWebView playback path.  Attach the analyser only when WebAudio is
+ * already running.  Otherwise leave the media element completely outside the
+ * graph and let it play directly through WebKit.
+ */
+function monitor(audio, onLevel) {
   if (!onLevel) return false
   try {
-    const running = await unlockVoiceAudio()
-    if (!running || !audioCtx || audioCtx.state !== 'running') {
-      onLevel(0)
-      return false
-    }
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+    if (!AudioContextCtor) { onLevel(0); return false }
+    audioCtx ||= new AudioContextCtor()
+    if (audioCtx.state !== 'running') { onLevel(0); return false }
 
     const source = audioCtx.createMediaElementSource(audio)
     analyser = audioCtx.createAnalyser()
@@ -66,6 +68,8 @@ async function monitor(audio, onLevel) {
     const tick = () => {
       if (!analyser) { onLevel(0); return }
       if (audio.ended) { stopAnalyser(onLevel); return }
+      // Playback starts after monitor() is installed. A paused first frame is
+      // expected; keep sampling instead of permanently dropping lip sync.
       if (audio.paused) { analyserFrame = requestAnimationFrame(tick); return }
       analyser.getByteTimeDomainData(data)
       let sum = 0
@@ -109,12 +113,13 @@ export async function playAudioUrl(url, {
     return { played: false }
   }
 
-  const audio = new Audio(url)
+  const audio = new Audio()
   activeAudio = audio
   if (objectUrl) activeObjectUrl = url
   audio.volume = Math.max(0, Math.min(1, volume))
   audio.preload = 'auto'
   audio.playsInline = true
+  audio.src = url
 
   let finished = false
   const finish = () => {
@@ -128,7 +133,8 @@ export async function playAudioUrl(url, {
   audio.onended = finish
   audio.onerror = finish
 
-  const lipsyncActive = await monitor(audio, onLevel)
+  // Synchronous and optional. Audible playback is the primary contract.
+  const lipsyncActive = monitor(audio, onLevel)
   try {
     await audio.play()
     const durationSec = Number.isFinite(audio.duration) ? audio.duration : 0

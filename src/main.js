@@ -7,6 +7,7 @@ import { mountHud } from './ui/hud.js'
 import { mountBubble } from './ui/bubble.js'
 import { mountBoot } from './ui/boot.js'
 import { mountMobileUi } from './ui/mobile.js'
+import { mountIosCallTranscriptScroll } from './ui/ios-call-scroll.js'
 import { createDialogue } from './pet/dialogue.js'
 import { createSettings, applyVisualSettings } from './pet/settings.js'
 import { playRingTone } from './pet/tone.js'
@@ -85,8 +86,9 @@ async function boot() {
 
   async function playTouch(hit) {
     if (!pet || busy || settings.get('voice') === false) return
-    // Resume WebAudio directly from the pointer-up gesture before any later
-    // asynchronous work. The player still falls back to direct <audio> output.
+    // Prime WebAudio from the gesture for lip sync, but audible playback no
+    // longer depends on this promise resolving. The player has a direct media
+    // fallback specifically for WKWebView.
     void unlockVoiceAudio()
     const reaction = nextTouchReaction(hit?.area || 'body')
     applyReaction(pet, reaction, { playMotion: true })
@@ -108,6 +110,60 @@ async function boot() {
     }
   }
 
+  /*
+   * Native iOS has exactly one character-tap owner: the stage/canvas capture
+   * path below. Cubism's pointerup callback is still used on desktop, but on
+   * WKWebView it can disappear when a transparent HUD layer or gesture recognizer
+   * wins the sequence. A stage fallback mirrors the proven mobile fix from main
+   * while leaving the CALL UI and its scrollable subtitle as separate targets.
+   */
+  let lastStageTapAt = 0
+  let pointerStart = null
+  const isCharacterTarget = (target) => target === stage || target === canvas
+  const areaFromPoint = (event) => {
+    const rect = stage.getBoundingClientRect()
+    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)))
+    if (y < 0.42) return 'head'
+    if (y < 0.63) return 'mouth'
+    return 'body'
+  }
+  const fireStageTap = (event) => {
+    if (!isIOS || !isCharacterTarget(event.target)) return
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    if (now - lastStageTapAt < 220) return
+    lastStageTapAt = now
+    void unlockVoiceAudio()
+    void playTouch({ area: areaFromPoint(event), source: 'stage', model: pet })
+  }
+  function mountIosStageTapFallback() {
+    if (!isIOS) return () => {}
+    const onPointerDown = (event) => {
+      if (!isCharacterTarget(event.target)) return
+      pointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY }
+      void unlockVoiceAudio()
+    }
+    const onPointerUp = (event) => {
+      const start = pointerStart
+      pointerStart = null
+      if (!start || start.id !== event.pointerId || !isCharacterTarget(event.target)) return
+      if (Math.abs(event.clientX - start.x) + Math.abs(event.clientY - start.y) > 14) return
+      fireStageTap(event)
+    }
+    const onPointerCancel = () => { pointerStart = null }
+    const onClick = (event) => fireStageTap(event)
+
+    stage.addEventListener('pointerdown', onPointerDown, true)
+    stage.addEventListener('pointerup', onPointerUp, true)
+    stage.addEventListener('pointercancel', onPointerCancel, true)
+    stage.addEventListener('click', onClick, true)
+    return () => {
+      stage.removeEventListener('pointerdown', onPointerDown, true)
+      stage.removeEventListener('pointerup', onPointerUp, true)
+      stage.removeEventListener('pointercancel', onPointerCancel, true)
+      stage.removeEventListener('click', onClick, true)
+    }
+  }
+
   async function speakReply(reply, mood = 'normal') {
     const line = String(reply || '').trim()
     if (!line) return
@@ -117,8 +173,8 @@ async function boot() {
     hud.rineHer(line, { read: true, quick: true })
 
     // CALL is a readable transcript surface, not karaoke. Show the complete
-    // Chinese reply as soon as the LLM returns; mobile CSS makes this box
-    // vertically scrollable for long answers while Japanese speech is playing.
+    // Chinese reply as soon as the LLM returns; the existing iOS CALL box stays
+    // visually unchanged and can now scroll reliably while speech is playing.
     presentLine(line, { log: false, rine: false })
 
     if (settings.get('voice') === false) {
@@ -134,7 +190,7 @@ async function boot() {
       translateTts: translateForKurisuTts,
       mood: reaction.emotion,
       onLevel: setMouth,
-      // Keep the alpha.2 player contract: one start callback and one final end
+      // Keep the stable player contract: one start callback and one final end
       // callback. Long-reply chunking stays entirely inside the voice pipeline.
       onStart: () => {},
       onEnd: () => resolveEnd(),
@@ -235,13 +291,19 @@ async function boot() {
   })
 
   app = await createPetAppCubism2(canvas, {
-    onTap: ({ hit }) => playTouch(hit),
+    // iOS uses the stage capture fallback above as the sole gesture owner.
+    // Keeping Cubism's callback as well would play two different OGG clips for
+    // one physical touch. Non-iOS previews retain precise Live2D hit testing.
+    onTap: ({ hit }) => { if (!isIOS) void playTouch(hit) },
     onLoaded: () => hud.sysLog('Kurisu / Cubism2 载入完成'),
   })
   pet = app.getManager()
   resize()
   await app.loadModel(MODEL_DIR, MODEL_FILE)
   resize()
+
+  const unmountStageTap = mountIosStageTapFallback()
+  const unmountTranscriptScroll = isIOS ? mountIosCallTranscriptScroll(hudRoot) : () => {}
 
   const syncViewport = () => setTimeout(resize, 60)
   window.addEventListener('resize', syncViewport)
@@ -272,8 +334,12 @@ async function boot() {
     checkServer().then((ok) => hud.sysLog(ok ? 'LLM API 已连接' : 'LLM API 配置存在，但当前连接失败'))
   }
 
-  window.__amaPet = { pet, hud, bubble, settings, mobileUi, brain }
-  window.addEventListener('beforeunload', () => app?.dispose?.())
+  window.__amaPet = { pet, app, hud, bubble, settings, mobileUi, brain, playTouch }
+  window.addEventListener('beforeunload', () => {
+    unmountStageTap()
+    unmountTranscriptScroll()
+    app?.dispose?.()
+  })
 }
 
 boot().catch((err) => {
