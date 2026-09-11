@@ -65,21 +65,28 @@ npm run build:render        # 复制进 dist/
 
 **必须走 GitHub Actions**（Windows 上无法构建 iOS）。
 
-分支 `chatgpt/ios-unsigned-ipa` 的工作流 `build-ios-unsigned-ipa.yml`：
+分支 `ios` 的**唯一**工作流 `build-ios-unsigned-ipa.yml`：
 
-- **`unsigned-ipa`（阻塞）** — 只放确定性门禁：四个契约测试、源码级断言、45 语音路由
-  与长回复切块契约、渲染产物检查，然后建 Capacitor 壳、无签名编译、打 Payload。
-  它还会断言包里**没有** `_CodeSignature` 和 `embedded.mobileprovision`，
+- **`unsigned-ipa`（阻塞）** — 只放确定性门禁：四个契约测试、`src/` 可达性审计、源码级
+  断言、45 语音路由与长回复切块契约、渲染产物检查，然后建 Capacitor 壳、无签名编译、
+  打 Payload。它还会断言包里**没有** `_CodeSignature` 和 `embedded.mobileprovision`，
   所以"未签名"是被验证的而不是假设的。
-- **`simulator-regressions`（`continue-on-error`）** — 在真机模拟器上跑 WKWebView
+- **`simulator-regressions`（`continue-on-error`）** — 在模拟器上跑**全套** WKWebView
   回归测试。**它没权力扣下产物**：这套测试对模拟器时序敏感，历史上曾连红 7 次而产品代码
   本身没问题。
 
-产物发布到浮动 tag，下载地址固定：
+产物按版本号发一个正式 release：
 
 ```
-https://github.com/rafiqxin/amadeus-pet/releases/tag/ios-unsigned-latest
+https://github.com/rafiqxin/amadeus-pet/releases  →  ios-v0.2.0-alpha.7
 ```
+
+> 早期用的是浮动 tag `ios-unsigned-latest` 并且标记为 prerelease —— GitHub 会把 prerelease
+> 折叠在 "Pre-releases" 开关后面，结果就是**构建明明成功却看起来从未发布**。改成每版一个
+> 真实 tag，可见性优先于一个会变的永久链接。
+>
+> 之前那三个 iOS 工作流（`build-ios-call-preview` / `build-ios-device-candidate` /
+> `call-fidelity-preview`）已归档到 `legacy/workflows/`，它们跑的东西已并入保留的这一个。
 
 未签名 IPA **不能直接安装**，iOS 要求用你自己的证书重签。用 AltStore / Sideloadly 过一遍。
 

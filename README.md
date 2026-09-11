@@ -4,8 +4,16 @@
 用户用中文交流，界面与字幕保持中文，红莉栖始终以**日语**发声——优先使用原版片段，
 匹配不到时由本机的 Kurisu TTS 生成。
 
-产品主线是 **iOS 客户端**：Capacitor 壳 + WKWebView 渲染层，同为桌面 Electron 版所复用
-（同一套 `src/`）。桌面端另见 `chatgpt/amadeus-core-workspace` 分支。
+产品主线是 **iOS 客户端**：Capacitor 壳 + WKWebView 渲染层，与桌面 Electron 版复用
+同一套 `src/`。仓库有三个长期分支：
+
+| 分支 | 用途 |
+| --- | --- |
+| `ios` | **本分支**。iOS 客户端，出未签名 IPA |
+| `main` | 桌面端（Electron），含本地 TTS 服务与打包 |
+| `android` | 安卓端，出 debug APK |
+
+其余分支已清理；被取代的工作流与资源归档在 [`legacy/`](legacy/README.md)。
 
 > 本项目与 MAGES. / Nitroplus / 5pb. 无关。代码与 UI 为原创；角色模型、语音片段与
 > 合成权重遵循各自上游许可，见 `THIRD_PARTY_NOTICES/`。

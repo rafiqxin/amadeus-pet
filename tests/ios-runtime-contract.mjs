@@ -44,10 +44,29 @@ assert.match(main, /const hello = await playReferenceVoice\('hello'/,
 assert.doesNotMatch(main, /if \(hello\.played\) await ended/,
   'connect must not hold the app lock until ended')
 
-const workflow = fs.readFileSync(new URL('../.github/workflows/build-ios-call-preview.yml', import.meta.url), 'utf8')
-assert.match(workflow, /WKWebView XCUITest/)
-assert.match(workflow, /xcodebuild[\s\S]*test/)
+// There is exactly one iOS workflow now. The three that used to exist are in
+// legacy/workflows/: build-ios-call-preview.yml ran the same XCUITest suite as a
+// hard gate before packaging and sat red for seven pushes, build-ios-device-
+// candidate.yml produced the same IPA without releasing it, and
+// call-fidelity-preview.yml triggered on a branch that no longer exists.
+const workflow = fs.readFileSync(new URL('../.github/workflows/build-ios-unsigned-ipa.yml', import.meta.url), 'utf8')
+assert.match(workflow, /runs-on: macos-15/,
+  'the iOS build needs a macOS runner')
+assert.match(workflow, /XCUITest|xcrun simctl/,
+  'the simulator regression job must still be wired up')
+assert.match(workflow, /xcodebuild[\s\S]*?\btest\b/,
+  'the simulator job must actually run xcodebuild test')
+assert.match(workflow, /continue-on-error: true/,
+  'the flaky simulator suite must not be able to withhold the IPA')
+assert.match(workflow, /gh release create[\s\S]*?--target/,
+  'the build must publish a real release, not only an artifact')
+assert.doesNotMatch(workflow, /--prerelease(?!\s*=\s*false)/,
+  'a prerelease is hidden behind the Pre-releases toggle, which is why the build looked unpublished; --prerelease=false is fine')
+
+const workflows = fs.readdirSync(new URL('../.github/workflows/', import.meta.url))
+assert.deepEqual(workflows, ['build-ios-unsigned-ipa.yml'],
+  'the iOS branch should carry a single workflow; superseded ones belong in legacy/workflows/')
 
 console.log('PASS iOS runtime + primary Live2D interaction contract')
 console.log('PASS connect lock contract: hello does not wait for ended')
-console.log('PASS CI contract includes Simulator/WKWebView XCUITest')
+console.log('PASS CI carries one non-blocking simulator suite that cannot withhold the release')

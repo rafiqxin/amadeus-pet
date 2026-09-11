@@ -22,7 +22,7 @@ name: Build and publish AMA-DEUS iOS unsigned IPA
 on:
   push:
     branches:
-      - chatgpt/ios-unsigned-ipa
+      - ios
     paths:
       - '.github/workflows/build-ios-unsigned-ipa.yml'
       - 'src/**'
@@ -40,9 +40,10 @@ permissions:
   contents: write
 
 env:
-  IPA_NAME: AMA-DEUS-iOS-v0.2.0-alpha.6-unsigned.ipa
+  IPA_NAME: AMA-DEUS-iOS-v0.2.0-alpha.7-unsigned.ipa
   APP_PATH: build/DerivedData/Build/Products/Release-iphoneos/App.app
-  RELEASE_TAG: ios-unsigned-latest
+  RELEASE_TAG: ios-v0.2.0-alpha.7
+  RELEASE_TITLE: AMA-DEUS iOS v0.2.0 alpha 7 · voice, lipsync and maintenance
 
 jobs:
   # Non-blocking. Reports WKWebView interaction regressions on a simulator
@@ -90,6 +91,9 @@ jobs:
           trap 'xcrun simctl shutdown "$SIM_UDID" >/dev/null 2>&1 || true' EXIT
           xcrun simctl bootstatus "$SIM_UDID" -b
           (cd ios-tests && xcodegen generate)
+          # The whole suite, not a selection. This job is non-blocking, so the
+          # extra coverage costs nothing when a gesture test is flaky and it
+          # removes the reason the old "call preview" workflow existed.
           xcodebuild \
             -project ios-tests/AmadeusHarness.xcodeproj \
             -scheme AmadeusHarness \
@@ -97,8 +101,6 @@ jobs:
             -derivedDataPath build/WKWebViewHarness \
             -parallel-testing-enabled NO \
             CODE_SIGNING_ALLOWED=NO \
-            -only-testing:AmadeusHarnessUITests/AmadeusUITests/testCallTranscriptFingerSwipeChangesScrollTop \
-            -only-testing:AmadeusHarnessUITests/AmadeusUITests/testLive2DCharacterTapReachesReactionAndAudio \
             test
 
   # Blocking. Everything here is deterministic, and it ends in the IPA.
@@ -318,16 +320,19 @@ jobs:
 
           SHA256: $(cut -d' ' -f1 "$SUM")"
 
+          # One versioned release per build. This used to be a floating
+          # "ios-unsigned-latest" tag marked as a prerelease, which GitHub hides
+          # behind a Pre-releases toggle — so the build looked like it had never
+          # been published. A real tag the user can see beats a moving URL.
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$FILE" "$SUM" --repo "$GITHUB_REPOSITORY" --clobber
             gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "AMA-DEUS iOS · unsigned IPA (latest)" --notes "$NOTES"
+              --title "$RELEASE_TITLE" --notes "$NOTES" --prerelease=false
           else
             gh release create "$RELEASE_TAG" "$FILE" "$SUM" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "AMA-DEUS iOS · unsigned IPA (latest)" \
-              --notes "$NOTES" \
-              --prerelease
+              --title "$RELEASE_TITLE" \
+              --notes "$NOTES"
           fi
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
