@@ -4,7 +4,8 @@ import { playReferenceVoice, playAudioBlob, stopVoicePlayback } from './player.j
 import { synthesizeTts, ttsConfigured } from './tts-client.js'
 
 const LONG_REPLY_CLASSIFIER_LIMIT = 88
-const TTS_SOURCE_CHUNK_CHARS = 56
+const LONG_REPLY_TTS_THRESHOLD = 92
+const TTS_SOURCE_CHUNK_CHARS = 64
 
 function containsJapanese(text) {
   return /[\u3040-\u30ff]/.test(String(text || ''))
@@ -15,7 +16,7 @@ function splitOversizeUnit(unit, maxChars) {
   let rest = String(unit || '').trim()
   const softBreaks = ['，', '、', ',', '：', ':', '（', '(', ' ']
   while (rest.length > maxChars) {
-    const minCut = Math.max(16, Math.floor(maxChars * 0.55))
+    const minCut = Math.max(18, Math.floor(maxChars * 0.55))
     let cut = -1
     for (const mark of softBreaks) {
       const candidate = rest.lastIndexOf(mark, maxChars)
@@ -29,12 +30,6 @@ function splitOversizeUnit(unit, maxChars) {
   return out
 }
 
-/**
- * Split the visible Chinese reply, not the generated WAV.  GPT-SoVITS can split
- * internally, but it only returns after the whole request is rendered.  On iOS
- * that means a long silence followed by a large base64 bridge payload.  Keeping
- * requests sentence-sized lets the first line speak sooner and bounds every WAV.
- */
 export function splitReplyForTts(text, maxChars = TTS_SOURCE_CHUNK_CHARS) {
   const source = String(text || '').replace(/\r/g, '').trim()
   if (!source) return []
@@ -63,19 +58,27 @@ export function splitReplyForTts(text, maxChars = TTS_SOURCE_CHUNK_CHARS) {
   return chunks.length ? chunks : [source]
 }
 
-async function playBlobUntilEnd(blob, opts = {}) {
-  let finish
-  const ended = new Promise((resolve) => { finish = resolve })
-  const result = await playAudioBlob(blob, {
-    ...opts,
-    onEnd: (meta) => finish(meta || {}),
-  })
-  if (!result.played) {
-    finish({ failed: true })
-    return { ...result, endMeta: { failed: true } }
+async function japaneseFor(sourceText, route, translateTts, signal, useRouteTranslation = false) {
+  let spokenJapanese = useRouteTranslation ? String(route.ttsJa || '').trim() : ''
+  if (!spokenJapanese && containsJapanese(sourceText)) spokenJapanese = sourceText
+  if (!spokenJapanese && typeof translateTts === 'function') {
+    spokenJapanese = String(await translateTts(sourceText, signal) || '').trim()
   }
-  const endMeta = await ended
-  return { ...result, endMeta }
+  if (!spokenJapanese) throw new Error('Japanese TTS translation unavailable')
+  return spokenJapanese
+}
+
+async function playBlobUntilEnded(blob, { onLevel = null, onStart = null } = {}) {
+  let resolveEnd
+  const ended = new Promise((resolve) => { resolveEnd = resolve })
+  const result = await playAudioBlob(blob, {
+    onLevel,
+    onStart,
+    onEnd: () => resolveEnd(),
+  })
+  if (!result.played) return result
+  await ended
+  return result
 }
 
 export async function routeAndSpeak(text, {
@@ -95,124 +98,94 @@ export async function routeAndSpeak(text, {
 
   const local = localVoiceDecision(reply, 0.92)
   let llmDecision = null
-  // A multi-sentence technical answer cannot realistically be one of the 45
-  // short reference clips. Skipping the classifier here removes an otherwise
-  // wasted LLM round-trip before TTS can even begin.
   if (!local && reply.length <= LONG_REPLY_CLASSIFIER_LIMIT && typeof classify === 'function') {
     try { llmDecision = await classify(reply, signal) } catch {}
   }
-  const route = local ? { kind: 'ogg', ...local } : finalizeVoiceRoute(reply, llmDecision, { localThreshold: 0.92, llmThreshold: 0.86 })
+  const route = local
+    ? { kind: 'ogg', ...local }
+    : finalizeVoiceRoute(reply, llmDecision, { localThreshold: 0.92, llmThreshold: 0.86 })
 
   if (route.kind === 'ogg' && route.id && getVoiceCatalogEntry(route.id)) {
     const result = await playReferenceVoice(route.id, { onLevel, onStart, onEnd })
     return { ...route, ...result }
   }
 
-  if (ttsConfigured()) {
-    try {
-      const sourceChunks = splitReplyForTts(reply)
-      const segmented = sourceChunks.length > 1
+  if (!ttsConfigured()) {
+    onLevel?.(0)
+    onEnd?.()
+    return { ...route, kind: 'text', played: false, error: 'TTS not configured' }
+  }
 
-      const prepare = async (sourceText, index) => {
-        let spokenJapanese = ''
-        // For short replies the semantic classifier may already have produced a
-        // high-quality Japanese line. Long replies are translated per visible
-        // chunk so subtitles and speech stay aligned sentence-by-sentence.
-        if (!segmented && route.ttsJa) spokenJapanese = String(route.ttsJa).trim()
-        if (!spokenJapanese && containsJapanese(sourceText)) spokenJapanese = sourceText
-        if (!spokenJapanese && typeof translateTts === 'function') {
-          spokenJapanese = String(await translateTts(sourceText, signal) || '').trim()
-        }
-        if (!spokenJapanese) throw new Error(`Japanese TTS translation unavailable for segment ${index + 1}`)
-        const generated = await synthesizeTts(spokenJapanese, { language: 'ja', mood, signal })
-        return { sourceText, spokenJapanese, generated, index }
-      }
-
-      let prepared = await prepare(sourceChunks[0], 0)
-      const spokenParts = []
-      let engine = prepared.generated.engine
-      let firstStarted = false
-
-      for (let index = 0; index < sourceChunks.length; index += 1) {
-        // Render the next chunk while the current WAV is already playing. The
-        // server is single-inference, but playback is local, so these can overlap.
-        const nextPromise = index + 1 < sourceChunks.length
-          ? prepare(sourceChunks[index + 1], index + 1)
-              .then((value) => ({ value }), (error) => ({ error }))
-          : null
-
-        const current = prepared
-        const result = await playBlobUntilEnd(current.generated.blob, {
-          onLevel,
-          onStart: (meta = {}) => {
-            const segmentMeta = {
-              index,
-              total: sourceChunks.length,
-              text: current.sourceText,
-              spokenText: current.spokenJapanese,
-              durationSec: meta.durationSec || 0,
-              segmented,
-            }
-            onSegmentStart?.(segmentMeta)
-            if (!firstStarted) {
-              firstStarted = true
-              onStart?.(segmentMeta)
-            }
-          },
-        })
-        if (!result.played) throw result.error || new Error(`TTS playback failed at segment ${index + 1}`)
-
-        spokenParts.push(current.spokenJapanese)
-        onSegmentEnd?.({
-          index,
-          total: sourceChunks.length,
-          text: current.sourceText,
-          spokenText: current.spokenJapanese,
-          segmented,
-          interrupted: !!result.endMeta?.interrupted,
-        })
-        if (result.endMeta?.interrupted) {
-          onEnd?.({ interrupted: true })
-          return {
-            ...route,
-            kind: 'tts',
-            language: 'ja',
-            spokenText: spokenParts.join(' '),
-            engine,
-            played: true,
-            interrupted: true,
-            segmented,
-            segmentCount: sourceChunks.length,
-          }
-        }
-
-        if (nextPromise) {
-          const next = await nextPromise
-          if (next.error) throw next.error
-          prepared = next.value
-          engine = engine || prepared.generated.engine
-        }
-      }
-
-      onEnd?.({ ended: true })
+  try {
+    // Preserve the exact alpha.2 behaviour for ordinary short replies. This is
+    // the path already verified on real iOS hardware: one translation, one WAV,
+    // one native bridge transfer, one HTMLMediaElement playback.
+    if (reply.length <= LONG_REPLY_TTS_THRESHOLD) {
+      const spokenJapanese = await japaneseFor(reply, route, translateTts, signal, true)
+      const generated = await synthesizeTts(spokenJapanese, { language: 'ja', mood, signal })
+      const result = await playAudioBlob(generated.blob, { onLevel, onStart, onEnd })
       return {
         ...route,
         kind: 'tts',
         language: 'ja',
-        spokenText: spokenParts.join(' '),
-        engine,
-        played: true,
-        segmented,
-        segmentCount: sourceChunks.length,
+        spokenText: spokenJapanese,
+        engine: generated.engine,
+        ...result,
       }
-    } catch (error) {
-      onLevel?.(0)
-      onEnd?.({ failed: true })
-      return { ...route, kind: 'text', played: false, error: error?.message || String(error) }
     }
-  }
 
-  onLevel?.(0)
-  onEnd?.({ failed: true })
-  return { ...route, kind: 'text', played: false, error: 'TTS not configured' }
+    // Long replies use deliberately conservative sequential chunks. We do NOT
+    // pipeline/concurrently pre-render the next request yet: alpha.3 proved that
+    // changing player lifetime and TTS scheduling at the same time is too risky
+    // on WKWebView. Reliability first; latency optimisation can follow after
+    // this path has passed physical-device testing.
+    const chunks = splitReplyForTts(reply)
+    const spokenParts = []
+    let engine = ''
+    let firstStarted = false
+
+    for (let index = 0; index < chunks.length; index += 1) {
+      const sourceText = chunks[index]
+      const spokenJapanese = await japaneseFor(sourceText, route, translateTts, signal, false)
+      const generated = await synthesizeTts(spokenJapanese, { language: 'ja', mood, signal })
+      engine ||= generated.engine || ''
+
+      const result = await playBlobUntilEnded(generated.blob, {
+        onLevel,
+        onStart: (meta = {}) => {
+          const segmentMeta = {
+            ...meta,
+            index,
+            total: chunks.length,
+            text: sourceText,
+            spokenText: spokenJapanese,
+          }
+          onSegmentStart?.(segmentMeta)
+          if (!firstStarted) {
+            firstStarted = true
+            onStart?.(segmentMeta)
+          }
+        },
+      })
+      if (!result.played) throw result.error || new Error(`TTS playback failed at segment ${index + 1}`)
+      spokenParts.push(spokenJapanese)
+      onSegmentEnd?.({ index, total: chunks.length, text: sourceText, spokenText: spokenJapanese })
+    }
+
+    onEnd?.()
+    return {
+      ...route,
+      kind: 'tts',
+      language: 'ja',
+      spokenText: spokenParts.join(' '),
+      engine,
+      played: true,
+      segmented: true,
+      segmentCount: chunks.length,
+    }
+  } catch (error) {
+    onLevel?.(0)
+    onEnd?.()
+    return { ...route, kind: 'text', played: false, error: error?.message || String(error) }
+  }
 }
