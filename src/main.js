@@ -20,7 +20,7 @@ import {
   translateForKurisuTts,
 } from './llm/client.js'
 import { routeAndSpeak } from './voice/pipeline.js'
-import { playReferenceVoice, stopVoicePlayback } from './voice/player.js'
+import { playReferenceVoice, stopVoicePlayback, unlockVoiceAudio } from './voice/player.js'
 
 const MODEL_DIR = './models/kurisu/'
 const MODEL_FILE = 'kurisu.model.json'
@@ -36,6 +36,9 @@ async function boot() {
   document.body.classList.toggle('mobile-ios', isIOS)
 
   const settings = createSettings()
+  // The mobile product has no exposed voice-off control. A stale desktop/iOS
+  // localStorage value must never silently disable all tap OGG and TTS output.
+  if (isIOS && settings.get('voice') === false) settings.set('voice', true)
   applyVisualSettings(stage, canvas, settings)
   const dialogue = createDialogue()
   const bubble = mountBubble(hudRoot)
@@ -43,9 +46,9 @@ async function boot() {
   let app = null
   let pet = null
   let consoleOpen = false
-  // `busy` protects an LLM/voice reply. Touch clips themselves do NOT own this
-  // lock: a new tap is allowed to interrupt the previous OGG and choose the next
-  // item from the 45-clip shuffle bag, matching desktop main behaviour.
+  // Conversation/TTS owns this lock. Idle character taps do not acquire it, so
+  // repeated physical taps can advance the 45-clip shuffle without waiting for
+  // a previous tap coroutine to finish.
   let busy = false
 
   function viewportSize() {
@@ -82,6 +85,9 @@ async function boot() {
 
   async function playTouch(hit) {
     if (!pet || busy || settings.get('voice') === false) return
+    // Resume WebAudio directly from the pointer-up gesture before any later
+    // asynchronous work. The player still falls back to direct <audio> output.
+    void unlockVoiceAudio()
     const reaction = nextTouchReaction(hit?.area || 'body')
     applyReaction(pet, reaction, { playMotion: true })
 
@@ -110,8 +116,12 @@ async function boot() {
     hud.aiLog(line)
     hud.rineHer(line, { read: true, quick: true })
 
+    // CALL is a readable transcript surface, not karaoke. Show the complete
+    // Chinese reply as soon as the LLM returns; mobile CSS makes this box
+    // vertically scrollable for long answers while Japanese speech is playing.
+    presentLine(line, { log: false, rine: false })
+
     if (settings.get('voice') === false) {
-      presentLine(line, { log: false, rine: false })
       await wait(Math.max(2200, Math.min(12000, line.length * 210)))
       hud.setCallSubtitle('')
       return
@@ -119,45 +129,21 @@ async function boot() {
 
     let resolveEnd
     const ended = new Promise((resolve) => { resolveEnd = resolve })
-    let started = false
-    let segmentDriven = false
     const route = await routeAndSpeak(line, {
       classify: classifyReferenceVoice,
       translateTts: translateForKurisuTts,
       mood: reaction.emotion,
       onLevel: setMouth,
-      // OGG replies have no segment callback, so they use the whole visible line.
-      onStart: ({ durationSec = 0 } = {}) => {
-        started = true
-        if (!segmentDriven) {
-          presentLine(line, {
-            log: false,
-            rine: false,
-            durationMs: durationSec > 0 ? durationSec * 1000 : 0,
-          })
-        }
-      },
-      // TTS is sentence-sized on iOS. Show exactly the Chinese source segment
-      // whose Japanese WAV has begun, rather than exposing the entire paragraph
-      // while only its first sentence is being spoken.
-      onSegmentStart: ({ text: segmentText, durationSec = 0 }) => {
-        segmentDriven = true
-        started = true
-        presentLine(segmentText, {
-          log: false,
-          rine: false,
-          durationMs: durationSec > 0 ? durationSec * 1000 : 0,
-        })
-      },
+      // Keep the alpha.2 player contract: one start callback and one final end
+      // callback. Long-reply chunking stays entirely inside the voice pipeline.
+      onStart: () => {},
       onEnd: () => resolveEnd(),
     })
 
     if (route.played) {
-      if (!started) presentLine(line, { log: false, rine: false })
       await ended
       await wait(220)
     } else {
-      presentLine(line, { log: false, rine: false })
       hud.sysLog(route.error ? `语音回退为文字：${route.error}` : '语音回退为文字')
       await wait(Math.max(2200, Math.min(14000, line.length * 220)))
     }
@@ -203,6 +189,13 @@ async function boot() {
     onResize() {},
     onOpacity() {},
     onVoice() {
+      // Desktop HUD compatibility only. On the iOS CALL product the mobile
+      // surface keeps role voice enabled permanently.
+      if (isIOS) {
+        settings.set('voice', true)
+        hud.setVoiceState(true)
+        return
+      }
       const next = settings.get('voice') === false
       settings.set('voice', next)
       hud.setVoiceState(next)
