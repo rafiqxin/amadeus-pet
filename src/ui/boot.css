@@ -1,139 +1,79 @@
-/* Boot sequence styling — warm Amadeus palette (amber on near-black).
-   NOTE: gradient angle kept near-vertical and all elements upright so the
-   screen never reads as tilted. */
+/* Geometry adapted from the Android Amadeus launch layout.
+   Gradient values match drawable/gradient_background.xml. */
 .boot {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   background: linear-gradient(135deg, #11110c 0%, #050600 50%, #231e00 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: opacity 0.6s, filter 0.6s;
-  opacity: 1;
+  font-family: 'Courier New', 'Noto Sans Mono CJK SC', monospace;
   z-index: 30;
+  opacity: 1;
+  transition: opacity 0.5s, filter 0.5s;
 }
-.boot.done { opacity: 0; filter: blur(3px); pointer-events: none; }
-
-.boot-scan {
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(255, 207, 64, 0.028) 0 1px,
-    transparent 1px 3px
-  );
-  animation: boot-scanmove 6s linear infinite;
+.boot.done {
+  opacity: 0;
+  filter: blur(2px);
   pointer-events: none;
 }
-@keyframes boot-scanmove {
-  from { background-position: 0 0; }
-  to { background-position: 0 150px; }
-}
-
-.boot-center {
-  text-align: center;
-  font-family: monospace;
-  width: 320px;
-}
-
-/* ---- spark → logo formation (≈0.9s) ---- */
-.boot-logo-stage {
-  position: relative;
-  height: 313px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-.boot-spark {
-  position: absolute;
-  top: 30px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #e08000;
-  box-shadow: 0 0 14px 4px rgba(224, 32, 0, 0.9), 0 0 40px 14px rgba(224, 64, 0, 0.45);
-  animation: spark-burst 0.9s ease-out forwards;
-}
-@keyframes spark-burst {
-  0% { transform: scale(0.15); opacity: 0; }
-  25% { transform: scale(2.6); opacity: 1; }
-  60% { transform: scale(1.4); opacity: 0.9; }
-  100% { transform: scale(0.2); opacity: 0; }
-}
-
 .boot-logo {
-  font-size: 330px;
-  font-weight: 900;
-  line-height: 1;
-  background: linear-gradient(180deg, #e89818 0%, #e87808 65%, #c85808 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: logo-form 0.76s ease-out 0.1s both;
-  filter: drop-shadow(0 0 22px rgba(224, 151, 17, 0.55));
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: calc(100% - 245px);
+  object-fit: contain;
+  object-position: center;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
-@keyframes logo-form {
-  0% { opacity: 0; transform: scale(0.2); filter: drop-shadow(0 0 60px rgba(224, 151, 17, 0.9)); }
-  55% { opacity: 1; }
-  100% { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 22px rgba(224, 151, 17, 0.55)); }
-}
-
-.boot-sub {
-  margin-top: 4px;
-  font-size: 10px;
-  letter-spacing: 4px;
-  color: #b3945c;
-  animation: logo-form 0.5s ease-out 0.6s both;
-}
-
 .boot-status {
-  margin-top: 22px;
-  font-size: 15px;
-  letter-spacing: 1px;
-  color: #ffdec7;
-  animation: logo-form 0.5s ease-out 0.7s both;
+  position: absolute;
+  left: 22px;
+  bottom: 215px;
+  color: #dec752;
+  font-family: 'Courier New', 'Noto Sans Mono CJK SC', monospace;
+  font-size: 22px;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-shadow: 0 1px 1px #000;
 }
-
-.boot-bar {
-  margin-top: 14px;
-  height: 4px;
-  background: rgba(255, 207, 64, 0.12);
-  border: 1px solid rgba(255, 207, 64, 0.35);
-}
-.boot-bar.hidden { visibility: hidden; }
-.boot-bar i {
-  display: block;
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #b33800, #ffab00);
-  box-shadow: 0 0 8px rgba(255, 171, 0, 0.6);
-}
-
 .boot-btns {
-  margin-top: 26px;
+  position: absolute;
+  left: 50%;
+  bottom: 86px;
+  width: 180px;
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 10px;
-  animation: logo-form 0.5s ease-out 0.8s both;
+  transform: translateX(-50%);
 }
-.boot-btn {
+.boot-image-btn {
+  position: relative;
   width: 180px;
   height: 40px;
-  border-radius: 20px;
-  border: 1px solid #deb600;
-  background: linear-gradient(180deg, #f82c00, #f80808 50%, #f85e00);
-  color: #ffdec7;
-  font-family: monospace;
-  font-size: 14px;
-  letter-spacing: 3px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
   cursor: pointer;
-  opacity: 0.2;
-  transition: opacity 0.15s, box-shadow 0.15s;
-  text-shadow: 0 1px 2px #000;
 }
-.boot-btn:hover, .boot-btn.active {
-  opacity: 0.82;
-  box-shadow: 0 0 18px rgba(248, 46, 0, 0.55), inset 0 0 10px #480808, inset 0 2px 6px rgba(255, 181, 0, 0.18);
+.boot-image-btn img {
+  position: absolute;
+  inset: 0;
+  width: 180px;
+  height: 40px;
+  object-fit: fill;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
+.boot-image-btn .selected { opacity: 0; }
+.boot-image-btn:hover .normal,
+.boot-image-btn:focus-visible .normal,
+.boot-image-btn:active .normal,
+.boot-image-btn.active .normal { opacity: 0; }
+.boot-image-btn:hover .selected,
+.boot-image-btn:focus-visible .selected,
+.boot-image-btn:active .selected,
+.boot-image-btn.active .selected { opacity: 1; }

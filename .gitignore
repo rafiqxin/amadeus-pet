@@ -1,7 +1,32 @@
 node_modules/
 release/
-dist/models/
+dist/
 
 # --- local-only / large assets (not pushed) ---
 llm/
-dist/
+
+# Local TTS workspace: GPT-SoVITS source, downloaded checkpoints, conda env.
+# Code that uses it lives in voice-server/ and is tracked.
+.workspace/
+
+# Local verification output (screenshots, generated voice samples).
+preview/
+voice-server/out/
+
+# Python bytecode caches.
+__pycache__/
+*.pyc
+
+# --- third-party assets that must not be redistributed through the repo ---
+
+# The 45 original Kurisu reaction clips. They are the author's own material and
+# are fetched at build time by tools/fetch-voices.mjs (the Android CI does the
+# same), so a clone gets them with `npm run voices:fetch`.
+public/Resources/amadeus-voices/
+
+# Live2D sample models. THIRD_PARTY_NOTICES states the sample data "may not be
+# redistributed outside this application"; legacy/ is not the application, so
+# these stay local. Restore them from the Live2D Cubism sample pack if needed.
+legacy/models/Haru/
+legacy/models/Mao/
+legacy/models/Wanko/

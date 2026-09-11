@@ -9,7 +9,10 @@
     "watch:render": "vite build --watch",
     "app": "electron .",
     "start": "npm run build:render && electron .",
-    "pack": "npm run build:render && electron-builder --dir"
+    "pack": "npm run build:render && electron-builder --dir",
+    "voices:fetch": "node tools/fetch-voices.mjs",
+    "verify:client": "node tools/verify-voice-client.mjs",
+    "verify:chain": "node tools/verify-speech-chain.mjs"
   },
   "build": {
     "appId": "com.fan.amadeus-pet",
@@ -44,6 +47,8 @@
     "vite": "^8.2.1"
   },
   "dependencies": {
+    "@capacitor-community/speech-recognition": "7.0.1",
+    "@capacitor/core": "7.6.9",
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^6.5.10"
   }

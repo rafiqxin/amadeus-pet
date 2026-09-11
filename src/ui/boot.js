@@ -1,7 +1,8 @@
-/* Amadeus-style boot sequence — original design informed by the
-   layout spec: warm near-black gradient, spark→logo formation,
-   amber monospace status, red/gold capsule buttons. */
+/* Amadeus launch view using the Android reference project's original UI assets.
+   Assets are synchronized into public/Resources/amadeus-reference. */
 import './boot.css'
+
+const ASSET = './Resources/amadeus-reference'
 
 export function mountBoot(root, hooks = {}) {
   const { onConnect = () => {}, onCancel = () => {} } = hooks
@@ -9,25 +10,22 @@ export function mountBoot(root, hooks = {}) {
   const el = document.createElement('div')
   el.className = 'boot'
   el.innerHTML = `
-    <div class="boot-scan"></div>
-    <div class="boot-center">
-      <div class="boot-logo-stage">
-        <div class="boot-spark"></div>
-        <div class="boot-logo">A</div>
-        <div class="boot-sub">// VIRTUAL ASSISTANT SYSTEM</div>
-      </div>
-      <div class="boot-status" id="boot-status">Connect to AMA·DEUS?</div>
-      <div class="boot-bar hidden"><i id="boot-bar"></i></div>
-      <div class="boot-btns">
-        <button class="boot-btn" id="boot-connect">CONNECT</button>
-        <button class="boot-btn" id="boot-cancel">CANCEL</button>
-      </div>
+    <img class="boot-logo" src="${ASSET}/logo39.png" alt="Amadeus" draggable="false" />
+    <div class="boot-status" id="boot-status">Connect to Kurisu?</div>
+    <div class="boot-btns">
+      <button class="boot-image-btn" id="boot-connect" type="button" aria-label="Connect">
+        <img class="normal" src="${ASSET}/connect_unselect.png" alt="" draggable="false" />
+        <img class="selected" src="${ASSET}/connect_select.png" alt="" draggable="false" />
+      </button>
+      <button class="boot-image-btn" id="boot-cancel" type="button" aria-label="Cancel">
+        <img class="normal" src="${ASSET}/cancel_unselect.png" alt="" draggable="false" />
+        <img class="selected" src="${ASSET}/cancel_select.png" alt="" draggable="false" />
+      </button>
     </div>
   `
   root.appendChild(el)
+
   const statusEl = el.querySelector('#boot-status')
-  const barEl = el.querySelector('#boot-bar')
-  const barFill = el.querySelector('#boot-bar')
   const connectBtn = el.querySelector('#boot-connect')
   const cancelBtn = el.querySelector('#boot-cancel')
 
@@ -38,36 +36,24 @@ export function mountBoot(root, hooks = {}) {
     if (finished) return
     finished = true
     if (autoTimer) clearTimeout(autoTimer)
-    const complete = () => {
+
+    statusEl.textContent = ok ? 'Connecting…' : 'Disconnected.'
+    ;(ok ? connectBtn : cancelBtn).classList.add('active')
+
+    setTimeout(() => {
       el.classList.add('done')
       setTimeout(() => {
         el.remove()
         if (done) done()
-      }, 650)
-    }
-    if (ok) {
-      statusEl.textContent = 'Connecting…'
-      connectBtn.classList.add('active')
-      const t0 = Date.now()
-      const fill = setInterval(() => {
-        const p = Math.min(1, (Date.now() - t0) / 1400)
-        barFill.style.width = `${p * 100}%`
-        if (p >= 1) {
-          clearInterval(fill)
-          setTimeout(complete, 250)
-        }
-      }, 40)
-    } else {
-      statusEl.textContent = 'Disconnected.'
-      complete()
-    }
+      }, 520)
+    }, ok ? 900 : 180)
   }
 
-  connectBtn.addEventListener('click', () => { finish(true, onConnect) })
-  cancelBtn.addEventListener('click', () => { finish(false, onCancel) })
+  connectBtn.addEventListener('click', () => finish(true, onConnect))
+  cancelBtn.addEventListener('click', () => finish(false, onCancel))
 
-  // First-time convenience: auto-connect after 15s of no interaction.
-  autoTimer = setTimeout(() => { finish(true, onConnect) }, 15000)
+  // Keep the current desktop convenience behavior.
+  autoTimer = setTimeout(() => finish(true, onConnect), 15000)
 
   return {
     el,

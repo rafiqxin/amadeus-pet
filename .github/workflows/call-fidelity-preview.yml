@@ -1,0 +1,48 @@
+name: CALL fidelity preview
+# capture-revision: 6
+
+on:
+  push:
+    branches:
+      - chatgpt/amadeus-reference-ui
+    paths:
+      - '.github/workflows/call-fidelity-preview.yml'
+
+jobs:
+  call-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install CJK font
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+          fc-cache -f >/dev/null
+
+      - run: npm ci
+      - run: npm run build:render
+
+      - name: Capture calibrated CALL
+        shell: bash
+        run: |
+          mkdir -p preview
+          set +e
+          timeout 50s xvfb-run -a env             AMA_HASH=call             AMA_CAPTURE="$PWD/preview/call-calibrated.png"             AMA_CAPTURE_DELAY=18500             ./node_modules/.bin/electron . --no-sandbox
+          code=$?
+          set -e
+          # Electron is expected to be terminated by timeout after capture.
+          # What matters is that capturePage produced a non-empty PNG.
+          test -s preview/call-calibrated.png
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: call-fidelity-preview
+          path: preview/call-calibrated.png
+          if-no-files-found: error

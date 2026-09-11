@@ -1,0 +1,155 @@
+name: Build and release AMA-DEUS iOS
+
+on:
+  push:
+    branches:
+      - chatgpt/ios-call-preview
+    paths:
+      - '.github/workflows/build-ios-call-preview.yml'
+      - 'src/**'
+      - 'index.html'
+      - 'package.json'
+      - 'vite.config.js'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm install --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7
+
+      - name: Open mobile CALL route
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("index.html")
+          s = p.read_text()
+          needle = '<script type="module" src="/src/main.js"></script>'
+          inject = '<script>location.hash = "#call";</script>\n  ' + needle
+          if needle not in s:
+              raise SystemExit("main.js script tag not found")
+          p.write_text(s.replace(needle, inject))
+          PY
+
+      - name: Bundle 45 Amadeus reference voice clips
+        shell: bash
+        run: |
+          set -euo pipefail
+          dst="public/Resources/amadeus-voices"
+          mkdir -p "$dst"
+          files=(
+            hello daga_kotowaru devilish_pervert i_guess nice pervert_confirmed sorry sounds_tough this_guy_hopeless
+            christina gah dont_add_tina why_christina who_the_hell_christina ask_me_whatever could_i_help what_do_you_want
+            what_is_it heheh huh_why_say you_sure nice_to_meet_okabe look_forward_to_working senpai_question senpai_questionmark
+            senpai_what_we_talkin senpai_who_is_this senpai_please_dont_tell still_not_happy dont_call_me_like_that tm_nonsense
+            tm_scientist_no_evidence tm_we_dont_know tm_you_said humans_software memory_complex secret_diary
+            modifying_memories_impossible memories_christina gah_extended should_christina ok tm_not_possible pleased_to_meet_you
+            pervert_idot_wanttodie
+          )
+          base="https://raw.githubusercontent.com/rafiqxin/Amadeus/master/app/src/main/res/raw"
+          for f in "${files[@]}"; do
+            curl -L --fail --retry 3 "$base/$f.ogg" -o "$dst/$f.ogg"
+            test -s "$dst/$f.ogg"
+          done
+          count=$(find "$dst" -name '*.ogg' -type f | wc -l | tr -d ' ')
+          test "$count" = "45"
+          echo "Bundled $count Amadeus reference voice clips"
+
+      - name: Build renderer
+        run: npm run build:render
+
+      - name: Verify voice bundle
+        run: |
+          count=$(find dist/Resources/amadeus-voices -name '*.ogg' -type f | wc -l | tr -d ' ')
+          test "$count" = "45"
+          echo "Verified $count voice clips in dist"
+
+      - name: Create Capacitor iOS shell
+        run: |
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "com.rafiqxin.amadeus",
+            "appName": "AMA-DEUS",
+            "webDir": "dist",
+            "bundledWebRuntime": false
+          }
+          JSON
+          npx cap add ios
+          npx cap sync ios
+
+      - name: Use Amadeus launcher icon
+        run: |
+          ICON_SRC="$RUNNER_TEMP/amadeus-launcher.png"
+          ICON_DST="ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"
+          curl -L --fail \
+            https://raw.githubusercontent.com/rafiqxin/Amadeus/master/app/src/main/ic_launcher-web.png \
+            -o "$ICON_SRC"
+          sips -z 1024 1024 "$ICON_SRC" --out "$ICON_DST" >/dev/null
+          test -s "$ICON_DST"
+
+      - name: Configure full-screen app
+        run: |
+          PLIST="ios/App/App/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :UIStatusBarHidden bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIStatusBarHidden true" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIViewControllerBasedStatusBarAppearance bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIViewControllerBasedStatusBarAppearance false" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || true
+
+      - name: Build unsigned device app
+        run: |
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          APP="build/DerivedData/Build/Products/Release-iphoneos/App.app"
+          test -d "$APP"
+          rm -rf build/Payload
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          cd build
+          zip -qry AMA-DEUS-iOS-v0.1.0-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-iOS-v0.1.0-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AMA-DEUS-iOS-v0.1.0-unsigned-IPA
+          path: build/AMA-DEUS-iOS-v0.1.0-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="ios-v0.1.0"
+          FILE="build/AMA-DEUS-iOS-v0.1.0-unsigned.ipa"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$FILE" --clobber
+          else
+            gh release create "$TAG" "$FILE" \
+              --target "$GITHUB_SHA" \
+              --title "AMA-DEUS iOS v0.1.0" \
+              --notes "First stable iOS baseline: Amadeus mobile CALL UI, configurable LLM API, Live2D reaction control, 45 reference OGG reactions, and audio-driven lip sync. iOS speech input is intentionally disabled; speech input moves to the Android track. The IPA is unsigned and requires user-side signing for installation."
+          fi
