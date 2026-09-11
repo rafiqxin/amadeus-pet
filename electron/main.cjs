@@ -4,6 +4,14 @@ const path = require('path')
 
 let win = null
 let dragSession = null
+/* Authoritative window size, pinned for the whole of a drag.
+   On this Windows/DPI setup a transparent frameless window gains exactly 1 px
+   of height on EVERY geometry call — setPosition and setBounds alike. Measured:
+   15 moves took the window from 854 to 868 px tall. Because the inflation is
+   per call, writing a size that is captured once and never re-read corrects it
+   on the next move instead of letting it accumulate. Only a real user resize
+   may change the pin. */
+let pinnedSize = null
 
 const PET_W = 480
 const PET_H = 853 // phone ratio 9:16 (Amadeus phone-app proportions)
@@ -18,13 +26,15 @@ function createWindow() {
     y: 200,
     transparent: true,
     frame: false,
-    resizable: false,
+    resizable: true,
     hasShadow: false,
     alwaysOnTop: true,
-    skipTaskbar: true,
+    // Appear in the taskbar so the OS itself offers close/minimise. Without a
+    // tray, skipping the taskbar left the frameless window unclosable.
+    skipTaskbar: false,
     fullscreenable: false,
     maximizable: false,
-    minimizable: false,
+    minimizable: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -34,13 +44,63 @@ function createWindow() {
     },
   })
 
-  // Lock the frameless window to one physical app size. On Windows this
-  // protects against DPI/snap-related bounds changes while dragging.
-  win.setMinimumSize(PET_W, PET_H)
-  win.setMaximumSize(PET_W, PET_H)
-  win.setAlwaysOnTop(true, 'screen-saver')
+  // Deliberately NO minWidth / minHeight.
+  // A height floor on a transparent, frameless, resizable Windows window makes
+  // the OS and Chromium trade resize requests: measured 1643 will-resize events
+  // in 15 s of complete idling, sweeping the window between the floor and its
+  // full height. minWidth alone is harmless, but the floor is not worth the
+  // storm — the shell is laid out in relative units and scales on its own.
+  //
+  // Also NO setAspectRatio here. Electron re-applies the ratio from inside
+  // WM_SIZING, which fires another resize, forever. Measured 2466 will-resize
+  // events in 45 s while idle. Handset proportions are the renderer's job now
+  // (see src/style.css), where they cannot fight the window manager.
+  win.setAlwaysOnTop(true, 'floating')
 
-  const page = process.env.AMA_DEMO ? 'demo.html' : 'index.html'
+  // Seed the pin from the real window, then let only genuine user resizes move
+  // it. Ignored mid-drag: a drag writes the size itself, so accepting those
+  // notifications would fold the 1 px inflation back into the pin.
+  pinnedSize = { width: win.getBounds().width, height: win.getBounds().height }
+  win.on('will-resize', (_event, newBounds) => {
+    if (dragSession) return
+    pinnedSize = { width: newBounds.width, height: newBounds.height }
+  })
+
+  // Aspect ratio is left to setAspectRatio alone. An earlier version also
+  // forced the ratio from a will-resize handler, but on a frameless window the
+  // OS resize border and that handler fight each other: clicking near the edge
+  // starts a system resize gesture, the handler rewrites the height mid-gesture,
+  // and the window jumps larger. Never call setBounds from a resize event.
+  //
+  // Set AMA_TRACE_BOUNDS=1 to log every bounds change while diagnosing.
+  if (process.env.AMA_TRACE_BOUNDS) {
+    // Startup marker: without it an empty log is ambiguous between "no events"
+    // and "tracing never initialised".
+    console.error(`[bounds] tracing enabled pid=${process.pid}`)
+    let resizes = 0
+    let moves = 0
+    let willResizes = 0
+    // Handlers only count. They must NOT read geometry: calling getBounds() from
+    // inside a resize/move notification provokes another one, and an earlier
+    // version of this tracer did exactly that — it manufactured the very resize
+    // storm it was meant to measure.
+    win.on('will-resize', (_event, newBounds) => {
+      willResizes++
+      console.error(`[bounds] will-resize #${willResizes} ${newBounds.width}x${newBounds.height}`)
+    })
+    win.on('resize', () => { resizes++ })
+    win.on('move', () => { moves++ })
+    const timer = setInterval(() => {
+      if (!win || win.isDestroyed()) { clearInterval(timer); return }
+      const b = win.getBounds()   // safe: read from a timer, never from a handler
+      console.error(`[bounds] t=${Math.round(process.uptime())}s size=${b.width}x${b.height} @${b.x},${b.y} resizes=${resizes} moves=${moves} willResizes=${willResizes}`)
+    }, 5000)
+    win.on('closed', () => clearInterval(timer))
+  }
+
+  // Only one shell ships: index.html. The Cubism 5 sample shell that AMA_DEMO
+  // used to switch to now lives in legacy/cubism5-demo/.
+  const page = 'index.html'
 
   // Register capture hooks before navigation. CI can load the local page fast
   // enough that attaching this listener after loadFile() races did-finish-load.
@@ -85,9 +145,12 @@ function setPetPosition(x, y) {
   const nx = clamp(Math.round(x), b.x - 200, b.x + b.width - 60)
   const ny = clamp(Math.round(y), b.y - 60, b.y + b.height - 60)
 
-  // Re-assert size on every move so Windows cannot mutate bounds while
-  // crossing DPI domains on a transparent frameless window.
-  win.setBounds({ x: nx, y: ny, width: PET_W, height: PET_H }, false)
+  // Write back the pinned size on every move. Never read the size here: reading
+  // it back would capture the 1 px inflation and compound it (measured: a
+  // 15-move drag grew the window from 586 to 600 px tall). Pinning means each
+  // move re-asserts the same rectangle, so the creep cannot accumulate.
+  const size = pinnedSize || win.getBounds()
+  win.setBounds({ x: nx, y: ny, width: size.width, height: size.height }, false)
 }
 
 /* ---- IPC: dragging the pet ---------------------------------- */
@@ -149,11 +212,12 @@ ipcMain.on('pet:snap-bottom', () => {
   if (!win) return
   const b = screen.getPrimaryDisplay().workArea
   const [wx] = win.getPosition()
+  const { width, height } = win.getBounds()
   win.setBounds({
-    x: clamp(wx, b.x, b.x + b.width - PET_W),
-    y: b.y + b.height - PET_H + 8,
-    width: PET_W,
-    height: PET_H,
+    x: clamp(wx, b.x, b.x + b.width - width),
+    y: b.y + b.height - height + 8,
+    width,
+    height,
   }, false)
 })
 

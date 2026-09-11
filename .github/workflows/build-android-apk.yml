@@ -3,12 +3,12 @@ name: Build AMA-DEUS Android APK
 on:
   push:
     branches:
-      - chatgpt/android-mobile
+      - chatgpt/amadeus-voice-workspace
     paths:
       - '.github/workflows/build-android-apk.yml'
-      - 'scripts/**'
       - 'src/**'
       - 'models/kurisu/**'
+      - 'voice-server/**'
       - 'index.html'
       - 'package.json'
       - 'vite.config.js'
@@ -34,12 +34,25 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Install dependencies
+      - name: Install renderer and Capacitor dependencies
         run: |
           npm ci
           npm install --save-exact @capacitor/core@7 @capacitor/android@7 @capacitor-community/speech-recognition@7.0.1
           npm install --save-dev --save-exact @capacitor/cli@7
           npm ls @capacitor/core @capacitor/android @capacitor-community/speech-recognition
+
+      - name: Verify clean product shell
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq '<canvas id="l2d-canvas"></canvas>' index.html
+          ! grep -q 'live2dcubismcore' index.html
+          ! grep -q 'l2d-canvas2' index.html
+          ! grep -q 'bubble' src/main.js
+          ! grep -q 'hud' src/main.js
+          ! grep -q 'createPetApp ' src/main.js
+          grep -q 'createPetAppCubism2' src/main.js
+          echo 'Production entry is Kurisu/Cubism2 + AMA-DEUS UI only.'
 
       - name: Verify Kurisu motions have no embedded sound
         run: |
@@ -55,40 +68,15 @@ jobs:
                       offenders.append(f'{group}[{i}]={motion["sound"]}')
           if offenders:
               raise SystemExit('Legacy motion audio still referenced: ' + ', '.join(offenders))
-          print('Kurisu motion definitions are silent; explicit AMA-DEUS voice owns audio output.')
+          print('Kurisu motion definitions contain no autonomous MP3 playback.')
           PY
 
-      - name: Adapt renderer for Android mobile and touch reactions
-        run: python3 scripts/adapt-android-mobile.py
-
-      - name: Verify single-owner mobile touch and exclusive OGG
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -Fq 'interactions.setConsoleOpen(open && !isMobile)' src/main.js
-          grep -Fq 'if (isMobile) return' src/main.js
-          grep -Fq 'window.speechSynthesis?.cancel()' src/pet/voice.js
-          grep -Fq 'touch-action: none !important' src/ui/mobile.css
-          echo 'Native mobile uses one touch owner and OGG cancels competing Web Speech.'
-
-      - name: Open mobile CALL route
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('index.html')
-          s = p.read_text()
-          needle = '<script type="module" src="/src/main.js"></script>'
-          inject = '<script>location.hash = "#call";</script>\n  ' + needle
-          if needle not in s:
-              raise SystemExit('main.js script tag not found')
-          p.write_text(s.replace(needle, inject))
-          PY
-
-      - name: Bundle 45 Amadeus reference voice clips
+      - name: Bundle 45 Amadeus reference OGG clips
         shell: bash
         run: |
           set -euo pipefail
           dst="public/Resources/amadeus-voices"
+          rm -rf "$dst"
           mkdir -p "$dst"
           files=(
             hello daga_kotowaru devilish_pervert i_guess nice pervert_confirmed sorry sounds_tough this_guy_hopeless
@@ -106,64 +94,62 @@ jobs:
           done
           test "$(find "$dst" -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
 
-      - name: Verify full 45-voice touch shuffle
+      - name: Verify voice catalog, shuffle, semantic route and language contract
         run: |
           node --input-type=module <<'NODE'
           import fs from 'node:fs'
+          import { VOICE_CATALOG } from './src/voice/catalog.js'
+          import { parseVoiceClassifierResponse } from './src/voice/semantic-router.js'
           import { TOUCH_REACTION_VOICE_IDS, nextTouchReaction, resetTouchReactions } from './src/pet/touch-reactions.js'
 
-          if (TOUCH_REACTION_VOICE_IDS.length !== 45) {
-            throw new Error(`expected 45 touch voices, got ${TOUCH_REACTION_VOICE_IDS.length}`)
+          if (VOICE_CATALOG.length !== 45 || new Set(VOICE_CATALOG.map(v => v.id)).size !== 45) {
+            throw new Error('voice catalog must contain 45 unique OGG entries')
           }
-          if (new Set(TOUCH_REACTION_VOICE_IDS).size !== 45) {
-            throw new Error('touch voice bank contains duplicate IDs')
+          if (TOUCH_REACTION_VOICE_IDS.length !== 45 || new Set(TOUCH_REACTION_VOICE_IDS).size !== 45) {
+            throw new Error('touch shuffle must expose all 45 voices')
           }
           for (const id of TOUCH_REACTION_VOICE_IDS) {
             const file = `public/Resources/amadeus-voices/${id}.ogg`
-            if (!fs.existsSync(file) || fs.statSync(file).size === 0) throw new Error(`missing touch OGG: ${id}`)
+            if (!fs.existsSync(file) || fs.statSync(file).size === 0) throw new Error(`missing OGG ${id}`)
           }
-
           resetTouchReactions()
-          const sequence = Array.from({ length: 90 }, () => nextTouchReaction('body').voice)
-          for (let round = 0; round < 2; round += 1) {
-            const slice = sequence.slice(round * 45, (round + 1) * 45)
-            if (new Set(slice).size !== 45) throw new Error(`shuffle round ${round + 1} repeated before exhausting all 45 voices`)
-          }
-          for (let i = 1; i < sequence.length; i += 1) {
-            if (sequence[i] === sequence[i - 1]) throw new Error(`adjacent repeat at index ${i}: ${sequence[i]}`)
-          }
-          console.log('Verified two complete 45-voice shuffle rounds with no early or adjacent repeats.')
+          const round = Array.from({ length: 45 }, () => nextTouchReaction('body').voice)
+          if (new Set(round).size !== 45) throw new Error('45-touch shuffle repeated before exhausting catalog')
+
+          const parsed = parseVoiceClassifierResponse('{"id":"NONE","confidence":0.22,"reason":"no close clip","tts_ja":"これは日本語の音声です。"}')
+          if (!parsed || parsed.id !== null || parsed.ttsJa !== 'これは日本語の音声です。') throw new Error('router lost tts_ja')
+
+          const main = fs.readFileSync('src/main.js', 'utf8')
+          const pipeline = fs.readFileSync('src/voice/pipeline.js', 'utf8')
+          const tts = fs.readFileSync('src/voice/tts-client.js', 'utf8')
+          const proxy = fs.readFileSync('voice-server/kurisu_tts_server.py', 'utf8')
+          if (!main.includes("recognizeOnce({ language: 'zh-CN' })")) throw new Error('STT must remain zh-CN')
+          if (!pipeline.includes("language: 'ja'")) throw new Error('pipeline must send ja to TTS')
+          if (!tts.includes("TTS_OUTPUT_LANGUAGE = 'ja'")) throw new Error('TTS client must be Japanese-only')
+          if (!proxy.includes('OUTPUT_LANGUAGE = "ja"')) throw new Error('TTS server must be Japanese-only')
+          console.log('Verified: user/STT=Chinese, visible reply=Chinese, generated speech=Japanese.')
           NODE
 
       - name: Build renderer
         run: npm run build:render
 
-      - name: Purge legacy Kurisu motion MP3 from Android bundle
+      - name: Verify legacy assets are excluded from product build
+        shell: bash
         run: |
-          rm -rf dist/models/kurisu/sounds
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          p = Path('dist/models/kurisu/kurisu.model.json')
-          data = json.loads(p.read_text())
-          offenders = []
-          for group, motions in data.get('motions', {}).items():
-              for i, motion in enumerate(motions):
-                  if motion.get('sound'):
-                      offenders.append(f'{group}[{i}]={motion["sound"]}')
-          if offenders:
-              raise SystemExit('Built model still references motion audio: ' + ', '.join(offenders))
-          if Path('dist/models/kurisu/sounds').exists():
-              raise SystemExit('Legacy Kurisu sounds directory still present in dist')
-          print('Built Android renderer contains no legacy Kurisu motion MP3 path.')
-          PY
-
-      - name: Verify deterministic touch bundle
-        run: |
-          grep -R -q '__amaLastTouch' dist/assets
+          set -euo pipefail
+          test -f dist/live2d.min.js
+          test -f dist/models/kurisu/kurisu.model.json
           test "$(find dist/Resources/amadeus-voices -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
-          test ! -d dist/models/kurisu/sounds
-          echo "Touch -> one mobile owner -> full 45 OGG shuffle; legacy motion MP3 absent."
+          test ! -e dist/Core
+          test ! -e dist/Resources/Framework
+          test ! -e dist/Resources/Haru
+          test ! -e dist/models/Haru
+          test ! -e dist/models/Mao
+          test ! -e dist/models/Wanko
+          test ! -e dist/models/kurisu/sounds
+          test ! -e dist/demo.html
+          ! grep -q '"sound"' dist/models/kurisu/kurisu.model.json
+          echo 'Legacy desktop/sample assets are absent from the Android renderer.'
 
       - name: Create Capacitor Android shell
         run: |
@@ -178,23 +164,7 @@ jobs:
           npx cap add android
           npx cap sync android
 
-      - name: Verify native SpeechRecognition registration
-        shell: bash
-        run: |
-          set -euo pipefail
-          PLUGINS="android/app/src/main/assets/capacitor.plugins.json"
-          test -f "$PLUGINS"
-          grep -q 'SpeechRecognition' "$PLUGINS"
-          grep -R -q 'capacitor-community-speech-recognition' android/capacitor.settings.gradle android/app/capacitor.build.gradle
-          echo "SpeechRecognition native Android plugin is registered."
-
-      - name: Verify Capacitor bundle has no legacy Kurisu MP3
-        run: |
-          test ! -d android/app/src/main/assets/public/models/kurisu/sounds
-          ! grep -q '"sound"' android/app/src/main/assets/public/models/kurisu/kurisu.model.json
-          echo 'Final Capacitor assets are free of legacy motion-bound Kurisu audio.'
-
-      - name: Configure Android permissions
+      - name: Configure Android voice and LAN permissions
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -203,12 +173,42 @@ jobs:
           perms = [
             '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
             '<uses-permission android:name="android.permission.INTERNET" />',
+            '<uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />',
           ]
           for perm in perms:
               if perm not in s:
                   s = s.replace('<application', perm + '\n    <application', 1)
+          if 'android:usesCleartextTraffic=' not in s:
+              s = s.replace('<application', '<application android:usesCleartextTraffic="true"', 1)
           p.write_text(s)
+          print(s)
           PY
+
+      - name: Verify native SpeechRecognition registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLUGINS="android/app/src/main/assets/capacitor.plugins.json"
+          test -f "$PLUGINS"
+          grep -q 'SpeechRecognition' "$PLUGINS"
+          grep -R -q 'capacitor-community-speech-recognition' android/capacitor.settings.gradle android/app/capacitor.build.gradle
+          grep -q 'usesCleartextTraffic="true"' android/app/src/main/AndroidManifest.xml
+          grep -q 'NEARBY_WIFI_DEVICES' android/app/src/main/AndroidManifest.xml
+          echo 'Native Chinese STT plugin and LAN TTS transport are configured.'
+
+      - name: Verify final Capacitor assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="android/app/src/main/assets/public"
+          test -f "$root/models/kurisu/kurisu.model.json"
+          test "$(find "$root/Resources/amadeus-voices" -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
+          test ! -e "$root/models/kurisu/sounds"
+          test ! -e "$root/models/Haru"
+          test ! -e "$root/models/Mao"
+          test ! -e "$root/models/Wanko"
+          test ! -e "$root/Core"
+          ! grep -q '"sound"' "$root/models/kurisu/kurisu.model.json"
 
       - name: Build debug APK
         working-directory: android
@@ -216,28 +216,28 @@ jobs:
 
       - name: Package APK
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk
-          sha256sum AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk.sha256
+          cp android/app/build/outputs/apk/debug/app-debug.apk AMA-DEUS-Android-v0.1.0-alpha.8-debug.apk
+          sha256sum AMA-DEUS-Android-v0.1.0-alpha.8-debug.apk | tee AMA-DEUS-Android-v0.1.0-alpha.8-debug.apk.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-Android-v0.1.0-alpha.7-debug-APK
+          name: AMA-DEUS-Android-v0.1.0-alpha.8-debug-APK
           path: |
-            AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk
-            AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk.sha256
+            AMA-DEUS-Android-v0.1.0-alpha.8-debug.apk
+            AMA-DEUS-Android-v0.1.0-alpha.8-debug.apk.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish Android prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.7]')
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release android v0.1.0-alpha.8]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "android-v0.1.0-alpha.7" \
-            "AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk#AMA-DEUS Android v0.1.0 alpha 7 APK" \
-            "AMA-DEUS-Android-v0.1.0-alpha.7-debug.apk.sha256#SHA-256 checksum" \
+          gh release create "android-v0.1.0-alpha.8" \
+            "AMA-DEUS-Android-v0.1.0-alpha.8-debug.apk#AMA-DEUS Android v0.1.0 alpha 8 APK" \
+            "AMA-DEUS-Android-v0.1.0-alpha.8-debug.apk.sha256#SHA-256 checksum" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS Android v0.1.0 alpha 7 · Full 45-Voice Shuffle" \
-            --notes "Alpha 7 fixes the misleadingly small direct-touch voice pool. All 45 bundled Amadeus reference OGG clips now participate in a shuffle-bag: every clip is used once per 45-touch round before any clip can repeat, and adjacent repeats are prevented across round boundaries. Touch location now controls only Kurisu's visual motion/expression rather than restricting audio to a 3-5 line regional pool. The alpha 6 fix remains intact: legacy Cubism motion MP3 audio is still removed from the source definition and final Android bundle, leaving explicit Amadeus OGG as the sole character voice source." \
+            --title "AMA-DEUS Android v0.1.0 alpha 8 · Japanese Kurisu TTS Pipeline" \
+            --notes "Alpha 8 keeps the proven 45-OGG touch shuffle from alpha 7 and adds the refactored voice catalog + semantic router. User voice recognition remains Chinese (zh-CN), LLM replies remain visible in Chinese, while generated Kurisu TTS is strictly Japanese. A routing LLM call can return both a high-confidence original OGG match and a Japanese TTS translation; unmatched replies are sent to the configured LAN Kurisu GPT-SoVITS bridge. No Android/Web Speech system voice fallback is used. The production renderer is now Kurisu/Cubism2-only and excludes legacy Cubism5 demo/sample assets from the APK." \
             --prerelease

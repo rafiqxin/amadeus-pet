@@ -1,0 +1,67 @@
+const STORAGE_KEY = 'amadeus-tts-v1'
+const DEFAULT_DESKTOP_ENDPOINT = 'http://127.0.0.1:9881'
+export const TTS_OUTPUT_LANGUAGE = 'ja'
+
+let config = { endpoint: '', enabled: true }
+try { config = { ...config, ...(JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}')) } } catch {}
+
+function isNativeMobile() { return typeof navigator !== 'undefined' && /Android|iPad|iPhone|iPod/i.test(navigator.userAgent) }
+function defaultEndpoint() { return isNativeMobile() ? '' : DEFAULT_DESKTOP_ENDPOINT }
+function baseUrl() { return String(config.endpoint || defaultEndpoint()).trim().replace(/\/$/, '') }
+
+export function getTtsConfig() { return { endpoint: config.endpoint || defaultEndpoint(), enabled: config.enabled !== false, outputLanguage: TTS_OUTPUT_LANGUAGE } }
+export function setTtsConfig(next = {}) {
+  config = {
+    endpoint: String(next.endpoint ?? config.endpoint ?? '').trim().replace(/\/$/, ''),
+    enabled: Object.prototype.hasOwnProperty.call(next, 'enabled') ? next.enabled !== false : config.enabled !== false,
+  }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(config)) } catch {}
+  return getTtsConfig()
+}
+export function clearTtsConfig() { config = { endpoint: '', enabled: true }; try { localStorage.removeItem(STORAGE_KEY) } catch {} }
+export function ttsConfigured() { return config.enabled !== false && !!baseUrl() }
+
+export async function checkTtsServer({ signal = null } = {}) {
+  if (!ttsConfigured()) return { ok: false, reason: 'not-configured' }
+  try {
+    const timeout = AbortSignal.timeout(5000)
+    const sig = signal ? AbortSignal.any([signal, timeout]) : timeout
+    const response = await fetch(`${baseUrl()}/health`, { signal: sig, cache: 'no-store' })
+    const body = await response.json().catch(() => ({}))
+    return { ok: response.ok && body?.ok !== false, status: response.status, body }
+  } catch (error) { return { ok: false, reason: error?.message || 'network-error' } }
+}
+
+export async function synthesizeTts(text, { language = TTS_OUTPUT_LANGUAGE, mood = 'normal', signal = null } = {}) {
+  const sentence = String(text || '').trim()
+  if (!sentence) throw new Error('TTS text is empty')
+  if (!ttsConfigured()) throw new Error('Kurisu TTS endpoint is not configured')
+  if (String(language || '').toLowerCase() !== TTS_OUTPUT_LANGUAGE) throw new Error('AMA-DEUS Kurisu TTS accepts Japanese speech text only')
+
+  // Long replies cost real synthesis time: GPT-SoVITS runs roughly 0.1 s per
+  // Japanese character on the RTX 4060, so a 700-character answer takes ~70 s
+  // and the previous 120 s cap silently dropped anything longer. Synthesis is
+  // local and bounded by the text the user just received, so a generous ceiling
+  // is the right trade — timing out here means the character says nothing.
+  const timeout = AbortSignal.timeout(300000)
+  const sig = signal ? AbortSignal.any([signal, timeout]) : timeout
+  const response = await fetch(`${baseUrl()}/v1/tts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: sentence, language: TTS_OUTPUT_LANGUAGE, mood: String(mood || 'normal') }),
+    signal: sig,
+    cache: 'no-store',
+  })
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`Kurisu TTS ${response.status}${detail ? `: ${detail.slice(0, 180)}` : ''}`)
+  }
+  const blob = await response.blob()
+  if (!blob.size) throw new Error('Kurisu TTS returned empty audio')
+  return {
+    blob,
+    contentType: response.headers.get('content-type') || blob.type || 'audio/wav',
+    engine: response.headers.get('x-amadeus-tts-engine') || 'kurisu-tts',
+    language: TTS_OUTPUT_LANGUAGE,
+  }
+}

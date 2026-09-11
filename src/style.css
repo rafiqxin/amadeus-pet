@@ -1,94 +1,170 @@
-@import './ui/reference-ui.css';
-
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  /* The BrowserWindow is transparent: everything outside the phone shell must
+     stay see-through so the bezel reads as a physical object on the desktop. */
   background: transparent;
-  font-family: 'Segoe UI', 'Noto Sans SC', sans-serif;
+  font-family: 'Segoe UI', 'Noto Sans SC', system-ui, sans-serif;
   user-select: none;
   -webkit-user-select: none;
+  overscroll-behavior: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+
+/* Desktop phone shell.
+   Keeps the port faithful to the Amadeus handset instead of a floating
+   rectangle, and gives the frameless window a visible body to grab.
+   The handset ratio is held HERE rather than with setAspectRatio, because
+   Electron re-applies that from inside WM_SIZING and the window manager fights
+   it. CSS cannot fight anything: free-resize the window and the shell simply
+   letterboxes, staying a phone at every size. */
+#phone {
+  position: relative;
+  aspect-ratio: 9 / 16;
+  height: min(100%, calc(100vw * 16 / 9));
+  width: auto;
+  padding: 26px 10px 22px;
+  border-radius: 46px;
+  background:
+    linear-gradient(152deg, #565f6a 0%, #2c333b 16%, #14181d 44%, #0d1015 72%, #232930 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, .11),
+    inset 0 1px 1px rgba(255, 255, 255, .24),
+    inset 0 -1px 1px rgba(0, 0, 0, .6);
+  /* Deliberately no outer drop shadow. The window is transparent, so a shadow
+     here renders as a dark halo filling the letterbox around the handset
+     instead of reading as depth — it looked like a stray grey layer sitting
+     behind the phone. */
+}
+
+/* The whole forehead is the window handle. A thin bezel forced pixel-accurate
+   grabs, and a miss landed on the character — which fired a touch reaction in
+   the middle of what the user intended as a drag. */
+.phone-top {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 26px;
+  border-radius: 46px 46px 0 0;
+  cursor: grab;
+}
+
+#phone.dragging .phone-top { cursor: grabbing; }
+
+/* Earpiece cutout with a camera dot, centred in the forehead. */
+.phone-notch {
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 104px;
+  height: 15px;
+  border-radius: 9px;
+  background: #05080c;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, .08),
+    inset 0 1px 2px rgba(0, 0, 0, .95);
+  pointer-events: none;
+}
+
+.phone-notch::after {
+  content: '';
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #2d4256, #04070a 72%);
+}
+
+/* Physical keys. */
+.phone-key {
+  position: absolute;
+  border: 0;
+  background: linear-gradient(90deg, #4e5762, #20252b);
+}
+
+.phone-key-power {
+  top: 122px;
+  right: -2px;
+  width: 3px;
+  height: 48px;
+  border-radius: 0 3px 3px 0;
+  cursor: pointer;
+}
+
+.phone-key-power:hover { background: linear-gradient(90deg, #ff8ba3, #c2385a); }
+
+.phone-key-vol {
+  left: -2px;
+  width: 3px;
+  border-radius: 3px 0 0 3px;
+}
+
+.phone-key-volup { top: 98px; height: 30px; }
+.phone-key-voldown { top: 134px; height: 30px; }
 
 #stage {
   position: absolute;
-  inset: 0;
+  inset: 26px 10px 22px;
+  /* `clip`, not `hidden`: the bottom sheets park themselves below the screen
+     (translateY(108%)), which makes the stage scrollable. Focusing the chat
+     textarea then scrolled the whole UI up out of the bezel. `clip` forbids
+     scrolling entirely instead of merely hiding the scrollbar. */
+  overflow: clip;
+  border-radius: 34px;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(10, 59, 67, .28), transparent 48%),
+    linear-gradient(180deg, #061017 0%, #03060c 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, .9),
+    inset 0 1px 14px rgba(0, 0, 0, .5);
 }
 
-#l2d-canvas, #l2d-canvas2 {
+/* Home indicator, inside the screen like a real handset. */
+.phone-home {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  width: 34%;
+  height: 4px;
+  border-radius: 3px;
+  background: rgba(214, 255, 243, .26);
+  pointer-events: none;
+}
+
+#l2d-canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   display: block;
+  touch-action: none;
+  pointer-events: auto;
 }
 
-#hud-root {
+#ui-root {
   position: absolute;
   inset: 0;
+  z-index: 20;
   pointer-events: none;
 }
-#hud-root > * {
-  pointer-events: auto;
-}
-/* the .hud container itself must never eat clicks (console/dock inside still do) */
-#hud-root > .hud { pointer-events: none; }
-#hud-root > .hud .hud-dock,
-#hud-root > .hud .hud-console:not(.hidden) { pointer-events: auto; }
 
-/* direct chat bar under the character */
-#chat-bar {
+.ama-disconnected {
   position: absolute;
-  left: 40px;
-  right: 40px;
-  bottom: 14px;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(205,255,238,.68);
+  font: 700 13px/1.4 monospace;
+  letter-spacing: .18em;
+  background: rgba(1,7,10,.78);
   pointer-events: auto;
 }
-#chat-form {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 38px;
-  background: rgba(5, 8, 18, 0.82);
-  border: 1px solid rgba(232, 168, 56, 0.5);
-  border-radius: 19px;
-  padding: 0 6px 0 14px;
-}
-.chat-prompt {
-  font-family: monospace;
-  color: #e09711;
-  font-size: 14px;
-}
-#chat-input {
-  flex: 1;
-  height: 100%;
-  background: transparent;
-  border: none;
-  outline: none;
-  color: #ffe9c8;
-  font-family: monospace;
-  font-size: 13px;
-}
-#chat-input::placeholder { color: rgba(180, 150, 90, 0.6); }
-.chat-send {
-  height: 26px;
-  padding: 0 14px;
-  border-radius: 13px;
-  border: 1px solid #deb600;
-  background: linear-gradient(180deg, #f82c00, #f80808 50%, #f85e00);
-  color: #ffdec7;
-  font-family: monospace;
-  font-size: 12px;
-  letter-spacing: 1px;
-  cursor: pointer;
-}
-.chat-send:hover { opacity: 0.9; }
-
-/* console open → hide the direct chat bar (console has its own input).
-   The head bubble is a console-hidden-only channel: the moment the console
-   opens it is removed (CALL subtitle / COMM.LOG take over the replies).
-   The dock stays available in EVERY mode (auto-hide, hover to reveal). */
-body.console-open #chat-bar { display: none; }
-body.console-open .bubble { display: none; }

@@ -1,0 +1,58 @@
+# AMA-DEUS Kurisu TTS — Windows inference requirements.
+#
+# Derived from GPT-SoVITS requirements.txt with ONE deliberate deviation:
+#
+#   upstream:  onnxruntime-gpu   (244 MB wheel)
+#   here:      onnxruntime       (13 MB wheel)
+#
+# onnxruntime is used only by GPT_SoVITS/text/g2pw/onnx_api.py, which
+# disambiguates polyphonic Chinese characters. AMA-DEUS speaks Japanese only, so
+# that path never runs; and if it ever does, the G2PW model is tiny enough that
+# CPU inference is fine. Both distributions provide the same `onnxruntime`
+# module, so code that imports it is unaffected.
+#
+# Everything else is upstream, unchanged, so nothing on the inference path is
+# missing. Install the upstream requirements.txt as well when you need the
+# WebUI, the ASR/dataset tools, or training (Phase 5).
+
+--no-binary=opencc
+numpy<2.0
+scipy
+tensorboard
+librosa==0.10.2
+numba
+pytorch-lightning>=2.4
+gradio<5
+ffmpeg-python
+onnxruntime; platform_machine == "x86_64" or platform_machine == "AMD64"
+tqdm
+funasr>=1.3.7
+cn2an
+pypinyin
+pyopenjtalk>=0.4.1
+g2p_en
+torchaudio
+modelscope
+sentencepiece
+transformers>=4.51,<5
+peft<0.18.0
+chardet
+PyYAML
+psutil
+jieba_fast
+jieba
+split-lang
+fast_langdetect>=0.3.1
+wordsegment
+rotary_embedding_torch
+ToJyutping
+g2pk2
+ko_pron
+opencc
+python_mecab_ko; sys_platform != 'win32'
+fastapi[standard]>=0.115.2
+x_transformers
+torchmetrics<=1.5
+pydantic<=2.10.6
+ctranslate2>=4.0,<5
+av>=11

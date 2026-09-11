@@ -1,0 +1,47 @@
+{
+  "_note": "Mood -> reference clip for the Kurisu voice bank. Paths are relative to .workspace/tts/models/kurisu. Prompt text must match the clip verbatim; it comes from WAV/o.list shipped with the fine-tune.",
+  "_source": "https://huggingface.co/bysq/TTS-KurisuMakise (apache-2.0)",
+
+  "fallback": "normal",
+
+  "aliases": {
+    "happy": "bright",
+    "pleasant": "bright",
+    "amused": "bright",
+    "embarrassed": "bright",
+    "blush": "bright",
+    "flustered": "bright",
+
+    "annoyed": "annoyed",
+    "angry": "annoyed",
+    "pissed": "annoyed",
+    "disappointed": "annoyed",
+    "side": "annoyed",
+
+    "normal": "normal",
+    "curious": "normal",
+    "worried": "normal",
+    "sad": "normal"
+  },
+
+  "references": {
+    "normal": {
+      "audio": "WAV/crs_0127.WAV_0000000000_0000164160.wav",
+      "text": "そうです。私が死んだのを見たっていうのが事実なのか。",
+      "lang": "ja",
+      "note": "Calm, matter-of-fact. Default timbre; also carries curious/worried/sad."
+    },
+    "annoyed": {
+      "audio": "WAV/crs_0128.WAV_0000000000_0000191040.wav",
+      "text": "でも、今のあなたの振る舞いで理解した。どうやら単なるセクハラだったみたい。",
+      "lang": "ja",
+      "note": "Dry exasperation. The tsundere register: annoyed/angry/pissed/disappointed."
+    },
+    "bright": {
+      "audio": "WAV/crs_0122.WAV_0000000000_0000161920.wav",
+      "text": "あなたに会いに来たの、岡部凛太郎さん。じゃなくて…",
+      "lang": "ja",
+      "note": "Brighter with a stumble. happy/embarrassed/blush/flustered."
+    }
+  }
+}
