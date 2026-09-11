@@ -1,52 +1,88 @@
-# AMA·DEUS Desktop Pet
+# AMA·DEUS
 
-非官方同人桌宠项目：受《命运石之门 0》中 Amadeus 系统启发，用 **Electron + Live2D Cubism Web SDK** 构建的桌面宠物。本项目的代码、UI 与台词均为原创；角色模型使用 Live2D 官方示例模型作为可替换占位底模，并预留一键替换自有授权模型的接口。
+非官方同人项目：受《命运石之门 0》中 Amadeus 系统启发的**手机形态 AI 终端**。
+用户用中文交流，界面与字幕保持中文，红莉栖始终以**日语**发声——优先使用原版片段，
+匹配不到时由本机的 Kurisu TTS 生成。
 
-> 本项目与 MAGES. / Nitroplus / 5pb. 无关，不包含任何官方美术、音频、台词或模型素材。
+产品主线是 **iOS 客户端**：Capacitor 壳 + WKWebView 渲染层，同为桌面 Electron 版所复用
+（同一套 `src/`）。桌面端另见 `chatgpt/amadeus-core-workspace` 分支。
 
-## 技术栈
+> 本项目与 MAGES. / Nitroplus / 5pb. 无关。代码与 UI 为原创；角色模型、语音片段与
+> 合成权重遵循各自上游许可，见 `THIRD_PARTY_NOTICES/`。
 
-- **Electron**：透明、无边框、置顶桌宠窗口（自定义拖拽 + 鼠标穿透）
-- **Vite**：渲染层构建
-- **Live2D Cubism SDK for Web (Cubism 5)**：模型渲染、动作、视线追踪
-- **PIXI.js**：WebGL 渲染上下文（官方示例同款方案）
+---
 
-## 目录结构
+## 界面
 
-```
-electron/main.cjs     主进程：窗口、拖拽 IPC、鼠标穿透
-electron/preload.cjs  渲染层桥接
-src/main.js           渲染层入口（组装 pet + HUD + 交互）
-src/pet/              Live2D 管线、交互、对话、设置
-src/ui/               HUD 控制台、气泡
-models/               模型资源（.model3.json / .moc3 / .motions）
-```
+CALL 画面是照 Java 版 Amadeus 的观感手绘复刻的，**这层视觉设计是刻意保留的**：
 
-## 功能
+- 顶部仿制状态栏（`XP </> USB`、信号、电量、时间）
+- 底部三键 dock（文字通信 / 语音输入 / 连接设置）
+- 字幕框使用 `subtitle_frame_big.png` 这张手绘边框
+- 全屏 Live2D 立绘，无手机边框——手机本身就是边框
 
-- **启动屏**：Amadeus 风格 boot sequence（扫描线、检查项、辉光 Logo、进度条）
-- **桌宠核心**：拖拽移动、双击停靠屏幕底部、点击头部换表情/身体触发动作、视线跟随鼠标、待机随机动作、说话口型同步（官方 LipSyncUpdater + 自研驱动）
-- **HUD 控制台**（TERM 页）：状态栏（时间/LINK/未读角标）、SIGNAL MONITOR 波形、COMM.LOG 对话（可打字）、缩放/透明度/语音/模型切换、贴边停靠
-- **通话界面**（CALL 页）：圆形 PERSONA LINK 监视器、声纹动画、CALL ACTIVE/HOLD 状态、通话控制
-- **语音**：Web Speech API（无语音时自动纯文字模式）
-- **模型内核切换**：Haru（助手·A型，栗红长发+黑丝重着色）/ Mao / Wanko 循环切换
-- **URL 演示钩子**：`#call` 自动打开通话界面；`#m1` 自动切换一次模型
+改功能时**不要重排这层结构**。
 
-## 运行
+---
+
+## 快速开始
 
 ```bash
 npm install
-npm run build:render
-npm run app          # 或 npx electron . --no-sandbox（Linux 虚拟机）
-# 或直接 ./run.sh（优先使用 release/linux-unpacked 打包产物）
+npm run build:render      # 构建渲染层到 dist/
+npm run app               # Electron 跑一遍（桌面调试用）
 ```
 
-## 模型授权说明
+> **在 VS Code 集成终端里启动**要先清掉 `ELECTRON_RUN_AS_NODE`，否则 electron.exe
+> 会退化成普通 Node 并立刻退出：`Remove-Item Env:ELECTRON_RUN_AS_NODE`
 
-- 占位模型来自 Live2D 官方示例数据（[Live2D/CubismWebSamples](https://github.com/Live2D/CubismWebSamples)），仅用于功能演示。
-- 想换成你自己的模型：把模型目录放到 `models/<name>/`（内含 `*.model3.json` 及依赖资源），然后修改 `src/main.js` 中的模型路径。
-- 请勿将任何未授权的商业角色模型放入本项目分发。
+45 条原版 OGG**不入库**（授权原因），CI 在构建时拉取。本地要跑完整语音链需要先取一次：
+
+```bash
+npm run voices:fetch      # 幂等；npm run voices:verify 只检查
+npm run build:render
+```
+
+---
+
+## 它需要两台机器
+
+语音是在**你自己的电脑上**合成的，不是云端：
+
+```
+iPhone (AMA-DEUS)  ──局域网──▶  PC: Kurisu TTS 服务 (0.0.0.0:9881, GPT-SoVITS v2 + CUDA)
+        │
+        └──HTTPS──▶ LLM（OpenAI 兼容，如 api.deepseek.com）
+```
+
+所以手机上必须把 TTS 端点填成电脑的**局域网 IP**（`127.0.0.1` 在手机上指它自己）：
+
+```
+设置 → Kurisu TTS Endpoint →  http://<电脑局域网IP>:9881
+```
+
+电脑侧服务要用 `-Lan` 启动，否则只绑回环地址：
+
+```powershell
+.\voice-server\run.ps1 -Lan
+```
+
+点「保存并测试」会按 `CONFIG → HEALTH → TRANSLATE → SYNTH → DECODE → PLAY → END`
+逐步显示诊断，断在哪一环一眼可见。
+
+---
 
 ## 许可
 
-代码部分 MIT。模型资源遵循其各自上游许可证（见 `models/README.md`）。
+代码 MIT。模型、语音片段与合成权重遵循各自上游许可，见 `THIRD_PARTY_NOTICES/`。
+请勿分发未授权素材。
+
+---
+
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统结构：启动流程、UI 分层、语音管线、人格层、口型、设计不变量 |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发与维护：构建、测试、CI、打包、排查 |
+| [legacy/README.md](legacy/README.md) | 归档内容清单，以及它们各自被什么取代 |

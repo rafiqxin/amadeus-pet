@@ -127,6 +127,9 @@ jobs:
           node tests/ios-sheet-reachability-contract.mjs
           node tests/tts-transport-contract.mjs
 
+      - name: Verify src/ has no orphaned modules
+        run: node tools/audit-reachability.mjs --quiet
+
       - name: Verify iOS voice and interaction source contracts
         shell: bash
         run: |

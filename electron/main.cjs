@@ -40,7 +40,11 @@ function createWindow() {
   win.setMaximumSize(PET_W, PET_H)
   win.setAlwaysOnTop(true, 'screen-saver')
 
-  const page = process.env.AMA_DEMO ? 'demo.html' : 'index.html'
+  // Only one shell ships. The Cubism 5 sample shell that AMA_DEMO used to switch
+  // to now lives in legacy/cubism5-demo/ and is not part of the build: its
+  // `@framework/*` imports resolve through an alias this project no longer
+  // defines, so it could not have loaded even while it was still wired up here.
+  const page = 'index.html'
 
   // Register capture hooks before navigation. CI can load the local page fast
   // enough that attaching this listener after loadFile() races did-finish-load.

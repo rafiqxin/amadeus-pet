@@ -1,7 +1,7 @@
 {
   "name": "amadeus-pet",
   "version": "0.1.0",
-  "description": "Unofficial fan-made Live2D desktop pet inspired by the Amadeus system of Steins;Gate. Original code and UI; character model is replaceable (official Live2D sample models used as placeholder).",
+  "description": "AMA-DEUS mobile client: Chinese conversation and subtitles, Makise Kurisu speaking Japanese from the 45 original clips or a local GPT-SoVITS server. Capacitor iOS shell over a shared web renderer.",
   "main": "electron/main.cjs",
   "license": "MIT",
   "scripts": {
@@ -10,6 +10,10 @@
     "app": "electron .",
     "start": "npm run build:render && electron .",
     "pack": "npm run build:render && electron-builder --dir",
+    "voices:fetch": "node tools/fetch-voices.mjs",
+    "voices:verify": "node tools/fetch-voices.mjs --verify-only",
+    "audit:src": "node tools/audit-reachability.mjs --quiet",
+    "verify:contracts": "node tests/ios-runtime-contract.mjs && node tests/ios-ui-audio-contract.mjs && node tests/ios-sheet-reachability-contract.mjs && node tests/tts-transport-contract.mjs",
     "sync:reference-ui": "node scripts/sync-amadeus-ui.mjs"
   },
   "build": {
