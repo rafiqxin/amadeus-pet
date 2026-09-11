@@ -29,12 +29,12 @@ final class AmadeusUITests: XCTestCase {
         return Int(String(field.dropFirst(prefix.count)))
     }
 
-    private func waitForThumbCenter(in probe: XCUIElement) -> CGVector {
+    private func waitForTranscriptCenter(in probe: XCUIElement) -> CGVector {
         let geometry = XCTNSPredicateExpectation(
             predicate: NSPredicate { [weak self] object, _ in
                 guard let self, let element = object as? XCUIElement else { return false }
-                guard let x = self.intField("thumbX", in: element.label),
-                      let y = self.intField("thumbY", in: element.label) else { return false }
+                guard let x = self.intField("targetX", in: element.label),
+                      let y = self.intField("targetY", in: element.label) else { return false }
                 return x > 0 && x < 10000 && y > 0 && y < 10000
             },
             object: probe
@@ -42,11 +42,11 @@ final class AmadeusUITests: XCTestCase {
         XCTAssertEqual(
             XCTWaiter.wait(for: [geometry], timeout: 12),
             .completed,
-            "real rendered thumb geometry never appeared: \(probe.label)"
+            "real rendered transcript geometry never appeared: \(probe.label)"
         )
-        let x = intField("thumbX", in: probe.label) ?? -1
-        let y = intField("thumbY", in: probe.label) ?? -1
-        XCTAssertTrue((1..<10000).contains(x) && (1..<10000).contains(y), "invalid thumb geometry: \(probe.label)")
+        let x = intField("targetX", in: probe.label) ?? -1
+        let y = intField("targetY", in: probe.label) ?? -1
+        XCTAssertTrue((1..<10000).contains(x) && (1..<10000).contains(y), "invalid transcript geometry: \(probe.label)")
         return CGVector(dx: CGFloat(x) / 10000.0, dy: CGFloat(y) / 10000.0)
     }
 
@@ -58,13 +58,18 @@ final class AmadeusUITests: XCTestCase {
         waitFor("audio=2", in: probe) // connect hello + tapped reaction
     }
 
-    func testCallTranscriptRealThumbChangesScrollTop() {
+    /// The transcript scrolls by finger. This swipes up inside the transcript
+    /// box and requires the renderer to report a non-zero scrollTop, which is
+    /// the same signal a user gets when the box follows their finger.
+    func testCallTranscriptFingerSwipeChangesScrollTop() {
         let (_, web, probe) = launch(mode: "scroll")
         waitFor("scrollable=1", in: probe)
-        let center = waitForThumbCenter(in: probe)
-        let endY = min(0.985, center.dy + 0.10)
-        XCTAssertGreaterThan(endY, center.dy, "real thumb has no downward drag room: \(probe.label)")
-        let start = web.coordinate(withNormalizedOffset: center)
+        let center = waitForTranscriptCenter(in: probe)
+        // Start low inside the box and drag up, the way a finger scrolls down.
+        let startY = min(0.97, center.dy + 0.05)
+        let endY = max(0.03, startY - 0.22)
+        XCTAssertLessThan(endY, startY, "finger has no upward drag room: \(probe.label)")
+        let start = web.coordinate(withNormalizedOffset: CGVector(dx: center.dx, dy: startY))
         let end = web.coordinate(withNormalizedOffset: CGVector(dx: center.dx, dy: endY))
         start.press(forDuration: 0.12, thenDragTo: end)
         waitFor("scrolled=1", in: probe)

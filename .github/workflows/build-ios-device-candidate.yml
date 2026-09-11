@@ -109,7 +109,7 @@ jobs:
             -derivedDataPath build/WKWebViewHarness \
             -parallel-testing-enabled NO \
             CODE_SIGNING_ALLOWED=NO \
-            -only-testing:AmadeusHarnessUITests/AmadeusUITests/testCallTranscriptRealThumbChangesScrollTop \
+            -only-testing:AmadeusHarnessUITests/AmadeusUITests/testCallTranscriptFingerSwipeChangesScrollTop \
             -only-testing:AmadeusHarnessUITests/AmadeusUITests/testLive2DCharacterTapReachesReactionAndAudio \
             test
 

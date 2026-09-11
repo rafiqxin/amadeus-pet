@@ -5,33 +5,39 @@ import fs from 'node:fs'
 // lives in ios-tests/ and is executed on an iOS Simulator by GitHub Actions.
 const scrollSource = fs.readFileSync(new URL('../src/ui/ios-call-scroll.js', import.meta.url), 'utf8')
 const scrollCss = fs.readFileSync(new URL('../src/ui/ios-call-fixes.css', import.meta.url), 'utf8')
-assert.match(scrollSource, /call-scroll-track/)
-assert.match(scrollSource, /call-scroll-thumb/)
-assert.match(scrollSource, /document\.body\.appendChild\(track\)/,
-  'CALL scrollbar must be portaled to document.body outside pointer-events:none HUD ancestors')
-assert.match(scrollSource, /rect\.right - 30/,
-  '44px hit target must preserve the previous visible rail center')
-assert.match(scrollSource, /const next = Math\.max\(0, Math\.min\(max, thumbDrag\.scrollTop/,
-  'thumb drag must calculate a bounded scrollTop from the drag origin')
-assert.match(scrollSource, /el\.scrollTop = next/,
-  'thumb drag must write the calculated value to the transcript scrollTop')
-assert.match(scrollSource, /thumb\.addEventListener\('pointerdown'/)
-assert.match(scrollSource, /document\.addEventListener\('pointerdown', onDocumentPointerDown, \{ capture: true, passive: false \}\)/,
-  'WKWebView thumb ownership must begin from document capture')
-assert.match(scrollSource, /document\.addEventListener\('touchstart', onDocumentTouchStart, \{ capture: true, passive: false \}\)/,
-  'WKWebView touch-start fallback must begin from document capture using geometry hit-testing')
-assert.match(scrollSource, /window\.addEventListener\('pointermove', onWindowPointerMove, \{ capture: true, passive: false \}\)/,
-  'pointer drag ownership must continue at window capture level')
-assert.match(scrollSource, /window\.addEventListener\('touchmove', onWindowTouchMove, \{ capture: true, passive: false \}\)/,
-  'touch drag ownership must continue at window capture level')
-assert.match(scrollCss, /\.call-scroll-track\s*\{[\s\S]*?width:\s*44px/,
-  'real track hit-test box must be finger-sized')
-assert.match(scrollCss, /\.call-scroll-thumb\s*\{[\s\S]*?width:\s*44px/,
-  'real thumb hit-test box must be finger-sized')
-assert.match(scrollCss, /\.call-scroll-track::before\s*\{[\s\S]*?width:\s*6px/,
-  'visible rail must remain 6px')
-assert.match(scrollCss, /\.call-scroll-thumb::after\s*\{[\s\S]*?width:\s*14px/,
-  'visible amber thumb must remain 14px')
+assert.match(scrollSource, /ama-transcript-scroll/,
+  'the transcript must still report its scroll state')
+assert.match(scrollSource, /el\.dataset\.scrollable/,
+  'the transcript must still expose whether it has overflow to scroll')
+assert.match(scrollSource, /el\.scrollTop = 0/,
+  'a new transcript must start at the top')
+
+// The transcript is scrolled by finger. There is no drawn rail or thumb: a
+// custom scrollbar over the hand-drawn CALL frame read as a foreign widget on
+// device, and what actually makes the gesture work is the touch handling below.
+assert.doesNotMatch(scrollSource, /call-scroll-track/,
+  'the custom scroll rail was removed on purpose; do not reintroduce it')
+assert.doesNotMatch(scrollSource, /call-scroll-thumb/,
+  'the custom scroll thumb was removed on purpose; do not reintroduce it')
+assert.doesNotMatch(scrollCss, /\.call-scroll-track/,
+  'scroll rail styling must not come back')
+assert.doesNotMatch(scrollCss, /\.call-scroll-thumb/,
+  'scroll thumb styling must not come back')
+assert.match(scrollCss, /\.call-subtitle\s*\{[\s\S]*?touch-action:\s*pan-y/,
+  'WKWebView only routes a vertical pan to the transcript when it advertises pan-y')
+assert.match(scrollCss, /\.call-subtitle\s*\{[\s\S]*?overflow-y:\s*auto\s*!important/,
+  'the transcript must remain a real scroll container')
+assert.match(scrollCss, /\.call-subtitle\s*\{[\s\S]*?-webkit-overflow-scrolling:\s*touch/,
+  'momentum scrolling is part of the finger-scroll contract')
+assert.match(scrollCss, /\.call-subtitle::-webkit-scrollbar\s*\{[\s\S]*?width:\s*0/,
+  'no scrollbar may be painted over the CALL frame')
+
+assert.match(scrollSource, /el\.addEventListener\('touchmove', onTouchMove, \{ passive: false \}\)/,
+  'the transcript must translate a finger drag itself: WKWebView does not reliably deliver the gesture past a pointer-events:none HUD')
+assert.match(scrollSource, /const next = Math\.max\(0, Math\.min\(max, touchTop \+ delta\)\)/,
+  'finger scrolling must clamp to the scrollable range')
+assert.match(scrollSource, /el\.addEventListener\('wheel', onWheel, \{ passive: false \}\)/,
+  'desktop wheel support drives the same markup in the Electron harness')
 
 let playCalls = 0
 class SuspendedAudioContext {
@@ -73,5 +79,5 @@ assert.equal(result.played, true)
 assert.equal(result.lipsyncActive, false)
 stopVoicePlayback('unit-test-finished')
 
-console.log('PASS custom CALL thumb body-portal 44px native hit-target contract')
+console.log('PASS CALL transcript scrolls by finger with no drawn scrollbar')
 console.log('PASS media playback remains independent from suspended WebAudio')

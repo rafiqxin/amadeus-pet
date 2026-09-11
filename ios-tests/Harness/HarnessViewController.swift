@@ -152,14 +152,17 @@ final class HarnessViewController: UIViewController, WKScriptMessageHandler, WKN
         let voice = String(describing: body["voice"] ?? "IDLE")
         let base = "AMA_TEST_PROBE ready=\(intValue(body, "ready")) reactions=\(intValue(body, "reactions")) audio=\(intValue(body, "audio")) scroll=\(intValue(body, "scroll")) max=\(intValue(body, "max")) scrollable=\(intValue(body, "scrollable")) scrolled=\(intValue(body, "scrolled")) voice=\(voice)"
 
-        // The scroll test must gesture on the real rendered thumb, not a guessed
-        // screen coordinate. Read its live DOM rect and bridge the normalized
-        // center to XCUITest as integer ten-thousandths of the WKWebView viewport.
+        // The scroll test must gesture on the real rendered transcript, not a
+        // guessed screen coordinate. Read its live DOM rect and bridge the
+        // normalized center to XCUITest as integer ten-thousandths of the
+        // WKWebView viewport. There is no scrollbar element any more: the
+        // transcript is scrolled with a finger, so the transcript itself is the
+        // gesture target.
         let geometryScript = """
         (() => {
-          const thumb = document.querySelector('.call-scroll-thumb');
-          if (!thumb) return null;
-          const r = thumb.getBoundingClientRect();
+          const target = document.querySelector('.call-subtitle');
+          if (!target) return null;
+          const r = target.getBoundingClientRect();
           const w = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
           const h = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);
           return {
@@ -172,22 +175,22 @@ final class HarnessViewController: UIViewController, WKScriptMessageHandler, WKN
         """
         webView.evaluateJavaScript(geometryScript) { [weak self] result, _ in
             guard let self, sequence == self.probeSequence else { return }
-            var thumbX = -1
-            var thumbY = -1
-            var thumbW = 0
-            var thumbH = 0
+            var targetX = -1
+            var targetY = -1
+            var targetW = 0
+            var targetH = 0
             if let geometry = result as? [String: Any] {
                 func number(_ key: String) -> Int {
                     if let n = geometry[key] as? NSNumber { return n.intValue }
                     if let n = geometry[key] as? Int { return n }
                     return 0
                 }
-                thumbX = number("x")
-                thumbY = number("y")
-                thumbW = number("width")
-                thumbH = number("height")
+                targetX = number("x")
+                targetY = number("y")
+                targetW = number("width")
+                targetH = number("height")
             }
-            self.setProbe("\(base) thumbX=\(thumbX) thumbY=\(thumbY) thumbW=\(thumbW) thumbH=\(thumbH)")
+            self.setProbe("\(base) targetX=\(targetX) targetY=\(targetY) targetW=\(targetW) targetH=\(targetH)")
         }
     }
 

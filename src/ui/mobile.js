@@ -14,7 +14,7 @@ import {
   clearTtsConfig,
   synthesizeTts,
 } from '../voice/tts-client.js'
-import { playAudioBlob, unlockVoiceAudio } from '../voice/player.js'
+import { playAudioBlob, unlockVoiceAudio, suspendVoiceAudio } from '../voice/player.js'
 import { beginVoiceTrace, voiceDiagnostic, subscribeVoiceDiagnostics, formatVoiceDiagnostics } from '../voice/diagnostics.js'
 import { nativeSpeechAvailablePlatform, recognizeOnce, stopRecognition } from '../platform/speech.js'
 
@@ -199,7 +199,10 @@ export function mountMobileUi(root, hooks = {}) {
       return
     }
 
-    await unlockVoiceAudio()
+    // Release the audio session instead of arming it: a running AudioContext
+    // holds iOS in a playback session, and SFSpeechRecognizer then fails to
+    // start its input engine (kAFAssistantErrorDomain 209).
+    await suspendVoiceAudio()
     voiceTranscriptEl.textContent = ''
     voiceStatusEl.textContent = '正在请求麦克风/语音识别权限…'
     setListening(true)

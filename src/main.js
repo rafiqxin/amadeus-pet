@@ -169,7 +169,7 @@ async function boot() {
   }
 
   function interactiveTarget(target) {
-    return !!target?.closest?.('button,input,textarea,form,.mobile-dock,.mobile-sheet,.mobile-sheet-backdrop,.call-subtitle,.call-scroll-track,.boot')
+    return !!target?.closest?.('button,input,textarea,form,.mobile-dock,.mobile-sheet,.mobile-sheet-backdrop,.call-subtitle,.boot')
   }
 
   /* Cubism owns the primary tap path exactly as it does on main. The stage
