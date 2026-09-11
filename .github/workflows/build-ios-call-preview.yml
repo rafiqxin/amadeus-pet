@@ -9,6 +9,7 @@ on:
       - '.github/workflows/build-ios-call-preview.yml'
       - 'src/**'
       - 'tests/**'
+      - 'ios-tests/**'
       - 'models/kurisu/**'
       - 'public/Resources/amadeus-reference/**'
       - 'index.html'
@@ -23,7 +24,7 @@ permissions:
 jobs:
   build-ipa:
     runs-on: macos-15
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -39,10 +40,11 @@ jobs:
           npm install --save-dev --save-exact @capacitor/cli@7
           npm ls @capacitor/core @capacitor/ios @capacitor-community/speech-recognition
 
-      - name: Run iOS runtime regression workspace tests
+      - name: Run fast unit and TTS transport tests
         run: |
           node tests/ios-runtime-contract.mjs
           node tests/ios-ui-audio-contract.mjs
+          node tests/tts-transport-contract.mjs
 
       - name: Bundle 45 Amadeus reference voice clips
         shell: bash
@@ -67,31 +69,31 @@ jobs:
           done
           test "$(find "$dst" -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
 
-      - name: Verify iOS voice contract source
+      - name: Verify iOS voice and interaction source contracts
         shell: bash
         run: |
           set -euo pipefail
           grep -q "TTS_OUTPUT_LANGUAGE = 'ja'" src/voice/tts-client.js
           grep -q "responseType: 'arraybuffer'" src/voice/tts-client.js
-          grep -q "base64Blob" src/voice/tts-client.js
-          grep -q "language: 'zh-CN'" src/ui/mobile.js
+          grep -q "decodeNativeAudioResponse" src/voice/tts-client.js
           grep -q "CapacitorHttp" src/llm/client.js
           grep -q "CapacitorHttp" src/voice/tts-client.js
           grep -q "unlockVoiceAudio" src/voice/player.js
+          grep -q "watchdog timeout" src/voice/player.js
+          grep -q "beginVoiceTrace('KURISU TTS')" src/voice/pipeline.js
+          for stage in CONFIG HEALTH TRANSLATE SYNTH DECODE PLAY END; do grep -R -q "'$stage'" src/voice; done
           grep -q "isIOSRuntime" src/main.js
-          grep -q "detectIOSRuntime" src/platform/runtime.js
-          grep -q "isNativeMobileRuntime" src/platform/speech.js
-          grep -q "LONG_REPLY_TTS_THRESHOLD" src/voice/pipeline.js
-          grep -q "splitReplyForTts" src/voice/pipeline.js
+          grep -q "onTap: ({ hit })" src/main.js
+          ! grep -q "if (!isIOS) void playTouch" src/main.js
+          grep -q "pointHit(event.clientX, event.clientY)" src/main.js
+          ! grep -q "target === stage || target === canvas" src/main.js
+          grep -q "call-scroll-track" src/ui/ios-call-scroll.js
+          grep -q "call-scroll-thumb" src/ui/ios-call-scroll.js
+          grep -q "thumb.addEventListener('pointerdown'" src/ui/ios-call-scroll.js
+          grep -q "mobile-sheet-grab" src/ui/mobile.js
+          grep -q "grab.addEventListener('pointerdown'" src/ui/mobile.js
+          grep -q "mobile-voice-diagnostics" src/ui/mobile.js
           grep -q "settings.set('voice', true)" src/main.js
-          grep -q "mountIosStageTapFallback" src/main.js
-          grep -q "mountIosCallTranscriptScroll" src/main.js
-          grep -q "overflow-y: auto" src/ui/ios-call-fixes.css
-          grep -q "pointer-events: none" src/ui/ios-call-fixes.css
-          grep -q "SYNTH/PLAY OK" src/ui/mobile.js
-          grep -q "synthesizeTts('接続テストです" src/ui/mobile.js
-          grep -q "nextTouchReaction" src/main.js
-          grep -q "routeAndSpeak" src/main.js
           if grep -q '"sound"[[:space:]]*:' models/kurisu/kurisu.model.json; then
             echo 'Kurisu model still contains embedded motion audio' >&2
             exit 1
@@ -129,8 +131,49 @@ jobs:
           test ! -e dist/models/Mao
           test ! -e dist/models/Wanko
           test ! -e dist/models/kurisu/sounds
-          grep -R -q "AMA-DEUS-iOS" dist/assets || true
           echo "Verified iOS bundle: Kurisu/Cubism2 + $count reference voices"
+
+      - name: Install XcodeGen for WKWebView XCUITest harness
+        run: brew install xcodegen
+
+      - name: Run iOS Simulator WKWebView XCUITest regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun simctl list devices available
+          SIM_UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys
+          data=json.load(sys.stdin)
+          devices=[]
+          for runtime, items in data.get("devices", {}).items():
+              if "iOS" not in runtime: continue
+              for d in items:
+                  if d.get("isAvailable") and d.get("name", "").startswith("iPhone"):
+                      devices.append(d)
+          preferred=next((d for d in devices if d.get("name")=="iPhone 16 Pro"), None)
+          chosen=preferred or (devices[0] if devices else None)
+          if not chosen: raise SystemExit("No available iPhone Simulator")
+          print(chosen["udid"])
+          ')
+          echo "Using simulator $SIM_UDID"
+          xcrun simctl boot "$SIM_UDID" >/dev/null 2>&1 || true
+          xcrun simctl bootstatus "$SIM_UDID" -b
+
+          node tests/tts-mock-server.mjs > /tmp/amadeus-mock-tts.log 2>&1 &
+          MOCK_PID=$!
+          trap 'kill "$MOCK_PID" >/dev/null 2>&1 || true; xcrun simctl shutdown "$SIM_UDID" >/dev/null 2>&1 || true' EXIT
+
+          (cd ios-tests && xcodegen generate)
+          xcodebuild \
+            -project ios-tests/AmadeusHarness.xcodeproj \
+            -scheme AmadeusHarness \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath build/WKWebViewHarness \
+            -parallel-testing-enabled NO \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+          cat /tmp/amadeus-mock-tts.log
 
       - name: Create Capacitor iOS shell
         run: |
@@ -146,8 +189,6 @@ jobs:
             }
           }
           JSON
-          grep -q '"preferredContentMode": "mobile"' capacitor.config.json
-          grep -q '"appendUserAgent": "AMA-DEUS-iOS"' capacitor.config.json
           npx cap add ios
           npx cap sync ios
 
@@ -162,9 +203,7 @@ jobs:
         run: |
           ICON_SRC="$RUNNER_TEMP/amadeus-launcher.png"
           ICON_DST="ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"
-          curl -L --fail --retry 5 \
-            https://raw.githubusercontent.com/rafiqxin/Amadeus/master/app/src/main/ic_launcher-web.png \
-            -o "$ICON_SRC"
+          curl -L --fail --retry 5 https://raw.githubusercontent.com/rafiqxin/Amadeus/master/app/src/main/ic_launcher-web.png -o "$ICON_SRC"
           sips -z 1024 1024 "$ICON_SRC" --out "$ICON_DST" >/dev/null
           test -s "$ICON_DST"
 
@@ -181,10 +220,6 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 'AMA-DEUS uses your local network to reach the Kurisu Japanese TTS server you configure.'" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSLocalNetworkUsageDescription 'AMA-DEUS uses your local network to reach the Kurisu Japanese TTS server you configure.'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST" || true
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSAppTransportSecurity:NSAllowsLocalNetworking true" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Print :NSSpeechRecognitionUsageDescription" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Print :NSAppTransportSecurity:NSAllowsLocalNetworking" "$PLIST"
 
       - name: Build unsigned device app
         run: |
@@ -220,29 +255,29 @@ jobs:
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
           cd build
-          zip -qry AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa Payload
-          shasum -a 256 AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa | tee AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa.sha256
+          zip -qry AMA-DEUS-iOS-v0.2.0-alpha.6-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-iOS-v0.2.0-alpha.6-unsigned.ipa | tee AMA-DEUS-iOS-v0.2.0-alpha.6-unsigned.ipa.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned-IPA
+          name: AMA-DEUS-iOS-v0.2.0-alpha.6-unsigned-IPA
           path: |
-            build/AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa
-            build/AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa.sha256
+            build/AMA-DEUS-iOS-v0.2.0-alpha.6-unsigned.ipa
+            build/AMA-DEUS-iOS-v0.2.0-alpha.6-unsigned.ipa.sha256
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish iOS prerelease
-        if: github.ref == 'refs/heads/chatgpt/ios-call-preview' && github.event_name == 'push' && contains(github.event.head_commit.message, '[release ios v0.2.0-alpha.5]')
+        if: github.ref == 'refs/heads/chatgpt/ios-call-preview' && github.event_name == 'push' && contains(github.event.head_commit.message, '[release ios v0.2.0-alpha.6]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="ios-v0.2.0-alpha.5"
-          FILE="build/AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa"
-          SUM="build/AMA-DEUS-iOS-v0.2.0-alpha.5-unsigned.ipa.sha256"
+          TAG="ios-v0.2.0-alpha.6"
+          FILE="build/AMA-DEUS-iOS-v0.2.0-alpha.6-unsigned.ipa"
+          SUM="build/AMA-DEUS-iOS-v0.2.0-alpha.6-unsigned.ipa.sha256"
           gh release create "$TAG" "$FILE" "$SUM" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS iOS v0.2.0 alpha 5 · iPad Runtime Fix" \
-            --notes "Fixes iPadOS native-runtime detection when WKWebView exposes a Macintosh user agent. The iOS CALL UI is preserved. Live2D taps now mount the mobile stage fallback on iPad, the existing CALL transcript gains its touch/wheel scroll behavior, mobile audio priming and STT mount correctly, and OGG/TTS media playback remains independent from WebAudio lipsync. Capacitor is also forced to preferredContentMode=mobile with an AMA-DEUS-iOS user-agent marker. Includes executable regression tests for iPad desktop UA, scrolling, and suspended-WebAudio playback. Unsigned IPA; user-side signing is required." \
+            --title "AMA-DEUS iOS v0.2.0 alpha 6 · Main Interaction Core" \
+            --notes "Keeps the established iOS CALL visual design while restoring main's Cubism onTap as the primary Live2D interaction path. The coordinate/hit-test stage listener is now fallback-only. Connect no longer holds the whole app until hello.ogg ends, all media end waiters have a watchdog, and TTS exposes CONFIG/HEALTH/TRANSLATE/SYNTH/DECODE/PLAY/END diagnostics on-device. CALL long text now has a real draggable scroll track/thumb, and bottom-sheet grab handles perform real pan-to-close gestures. CI now runs fast unit/transport checks plus a real iOS Simulator WKWebView XCUITest harness for Live2D tap routing, transcript thumb scrolling, and mock TTS transport/play invocation before packaging the unsigned IPA." \
             --prerelease

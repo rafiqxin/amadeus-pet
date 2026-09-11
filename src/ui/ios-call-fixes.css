@@ -1,17 +1,14 @@
 /* iOS-only interaction corrections for the retained AMA-DEUS CALL surface. */
 
-/* The desktop HUD console spans the whole viewport and normally owns pointer
-   events. On iOS that invisible layer sits above the Live2D canvas and can eat
-   character taps. The mobile dock/sheets live outside this subtree, so make the
-   CALL chrome transparent to touch and opt the subtitle back in only for scroll. */
+/* Keep the old visual chrome, not its input ownership. The Live2D canvas is the
+   primary interaction surface; CALL decorations are transparent except for the
+   transcript and its explicit scroll thumb. */
 body.mobile-ios.console-open.call-mode .hud-console,
 body.mobile-ios.console-open.call-mode .hud-frame,
 body.mobile-ios.console-open.call-mode .hud-call {
   pointer-events: none !important;
 }
 
-/* Keep the complete Chinese answer in CALL. Long replies are a transcript, not
-   karaoke: the user can drag vertically while Japanese TTS continues. */
 body.mobile-ios.console-open.call-mode .call-subtitle {
   pointer-events: auto !important;
   touch-action: pan-y;
@@ -27,24 +24,51 @@ body.mobile-ios.console-open.call-mode .call-subtitle {
   text-align: left !important;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  padding-right: 18px !important;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(232, 168, 56, .78) rgba(255, 255, 255, .08);
+  padding-right: 22px !important;
+  scrollbar-width: none;
 }
-
 body.mobile-ios.console-open.call-mode .call-subtitle::-webkit-scrollbar {
-  width: 5px;
-}
-body.mobile-ios.console-open.call-mode .call-subtitle::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, .06);
-  border-radius: 999px;
-}
-body.mobile-ios.console-open.call-mode .call-subtitle::-webkit-scrollbar-thumb {
-  background: rgba(232, 168, 56, .82);
-  border-radius: 999px;
+  width: 0;
+  height: 0;
 }
 
-/* The actual mobile controls remain the only full CALL interaction chrome. */
+/* A real scroll control, not a styled system overlay scrollbar. JS positions
+   this track against the current CALL subtitle rectangle so the retained visual
+   layout can keep changing across iPhone sizes without hard-coded coordinates. */
+body.mobile-ios.console-open.call-mode .call-scroll-track {
+  position: absolute;
+  z-index: 78;
+  width: 6px;
+  min-height: 28px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  box-shadow: inset 0 0 0 1px rgba(224,151,17,.12);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease;
+  touch-action: none;
+}
+body.mobile-ios.console-open.call-mode .call-scroll-track.show {
+  opacity: 1;
+  pointer-events: auto !important;
+}
+body.mobile-ios.console-open.call-mode .call-scroll-thumb {
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 14px;
+  min-height: 28px;
+  border-radius: 999px;
+  background: rgba(232,168,56,.88);
+  box-shadow: 0 0 10px rgba(232,168,56,.30), inset 0 0 0 1px rgba(255,235,190,.28);
+  pointer-events: auto;
+  touch-action: none;
+}
+body.mobile-ios.console-open.call-mode .call-scroll-thumb.dragging {
+  background: rgba(255,190,74,.98);
+  box-shadow: 0 0 15px rgba(232,168,56,.48), inset 0 0 0 1px rgba(255,245,220,.40);
+}
+
 body.mobile-ios.console-open.call-mode .mobile-dock,
 body.mobile-ios.console-open.call-mode .mobile-sheet,
 body.mobile-ios.console-open.call-mode .mobile-sheet-backdrop {

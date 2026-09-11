@@ -1,4 +1,5 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core'
+import { voiceDiagnostic } from './diagnostics.js'
 
 const STORAGE_KEY = 'amadeus-tts-v1'
 const DEFAULT_DESKTOP_ENDPOINT = 'http://127.0.0.1:9881'
@@ -17,13 +18,31 @@ function header(headers, name) {
   const key = Object.keys(headers).find((k) => k.toLowerCase() === name.toLowerCase())
   return key ? String(headers[key] || '') : ''
 }
+
 function base64Blob(value, contentType = 'audio/wav') {
-  const raw = String(value || '')
+  if (value instanceof ArrayBuffer) return new Blob([value], { type: contentType })
+  if (ArrayBuffer.isView(value)) return new Blob([value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength)], { type: contentType })
+  if (Array.isArray(value)) return new Blob([Uint8Array.from(value)], { type: contentType })
+
+  let raw = String(value || '').trim()
   if (!raw) return new Blob([], { type: contentType })
+  const comma = raw.indexOf(',')
+  if (raw.startsWith('data:') && comma >= 0) raw = raw.slice(comma + 1)
   const binary = atob(raw)
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
   return new Blob([bytes], { type: contentType })
+}
+
+export function decodeNativeAudioResponse(response = {}) {
+  const contentType = header(response.headers, 'content-type') || 'audio/wav'
+  const blob = base64Blob(response.data, contentType)
+  return {
+    blob,
+    contentType,
+    engine: header(response.headers, 'x-amadeus-tts-engine') || 'kurisu-tts',
+    language: TTS_OUTPUT_LANGUAGE,
+  }
 }
 
 export function getTtsConfig() {
@@ -70,6 +89,7 @@ export async function synthesizeTts(text, { language = TTS_OUTPUT_LANGUAGE, mood
 
   const url = `${baseUrl()}/v1/tts`
   const payload = { text: sentence, language: TTS_OUTPUT_LANGUAGE, mood: String(mood || 'normal') }
+  voiceDiagnostic('SYNTH', 'WORK', `${sentence.length} ja chars`)
 
   if (isNativeMobile()) {
     const response = await CapacitorHttp.post({
@@ -80,15 +100,19 @@ export async function synthesizeTts(text, { language = TTS_OUTPUT_LANGUAGE, mood
       connectTimeout: 15000,
       readTimeout: 300000,
     })
-    if (response.status < 200 || response.status >= 300) throw new Error(`Kurisu TTS HTTP ${response.status}`)
-    const contentType = header(response.headers, 'content-type') || 'audio/wav'
-    const blob = base64Blob(response.data, contentType)
-    if (!blob.size) throw new Error('Kurisu TTS returned empty audio')
-    return {
-      blob,
-      contentType,
-      engine: header(response.headers, 'x-amadeus-tts-engine') || 'kurisu-tts',
-      language: TTS_OUTPUT_LANGUAGE,
+    if (response.status < 200 || response.status >= 300) {
+      voiceDiagnostic('SYNTH', 'FAIL', `HTTP ${response.status}`)
+      throw new Error(`Kurisu TTS HTTP ${response.status}`)
+    }
+    voiceDiagnostic('SYNTH', 'OK', `HTTP ${response.status}`)
+    try {
+      const decoded = decodeNativeAudioResponse(response)
+      if (!decoded.blob.size) throw new Error('Kurisu TTS returned empty audio')
+      voiceDiagnostic('DECODE', 'OK', `${decoded.blob.size} B`)
+      return decoded
+    } catch (error) {
+      voiceDiagnostic('DECODE', 'FAIL', error?.message || String(error))
+      throw error
     }
   }
 
@@ -103,10 +127,16 @@ export async function synthesizeTts(text, { language = TTS_OUTPUT_LANGUAGE, mood
   })
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
+    voiceDiagnostic('SYNTH', 'FAIL', `HTTP ${response.status}`)
     throw new Error(`Kurisu TTS ${response.status}${detail ? `: ${detail.slice(0, 180)}` : ''}`)
   }
+  voiceDiagnostic('SYNTH', 'OK', `HTTP ${response.status}`)
   const blob = await response.blob()
-  if (!blob.size) throw new Error('Kurisu TTS returned empty audio')
+  if (!blob.size) {
+    voiceDiagnostic('DECODE', 'FAIL', '0 B')
+    throw new Error('Kurisu TTS returned empty audio')
+  }
+  voiceDiagnostic('DECODE', 'OK', `${blob.size} B`)
   return {
     blob,
     contentType: response.headers.get('content-type') || blob.type || 'audio/wav',

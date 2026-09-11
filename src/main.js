@@ -1,5 +1,5 @@
-/* AMA-DEUS iOS renderer: preserve the mobile CALL presentation while using
-   the same conversation / voice core as main. */
+/* AMA-DEUS iOS renderer: retain the current CALL presentation while the
+   interaction/voice core follows main. */
 import './style.css'
 
 import { createPetAppCubism2 } from './live2d/cubism2app.js'
@@ -22,7 +22,9 @@ import {
   translateForKurisuTts,
 } from './llm/client.js'
 import { routeAndSpeak } from './voice/pipeline.js'
-import { playReferenceVoice, stopVoicePlayback, unlockVoiceAudio } from './voice/player.js'
+import { playReferenceVoice, playAudioBlob, stopVoicePlayback, unlockVoiceAudio } from './voice/player.js'
+import { checkTtsServer, setTtsConfig, synthesizeTts } from './voice/tts-client.js'
+import { beginVoiceTrace, voiceDiagnostic } from './voice/diagnostics.js'
 
 const MODEL_DIR = './models/kurisu/'
 const MODEL_FILE = 'kurisu.model.json'
@@ -34,14 +36,43 @@ async function boot() {
   const hudRoot = document.getElementById('hud-root')
   if (!stage || !canvas || !hudRoot) throw new Error('iOS CALL surface is incomplete')
 
-  // Do not rely on iPad/iPhone tokens in the UA. Capacitor on iPadOS may use a
-  // desktop-class Macintosh UA even though this is a native iOS WKWebView.
   const isIOS = isIOSRuntime()
+  const uiTest = !!window.__AMA_UI_TEST__
+  const uiTestMode = String(window.__AMA_UI_TEST_MODE__ || '')
   document.body.classList.toggle('mobile-ios', isIOS)
 
+  const testState = { ready: 0, reactions: 0, audio: 0, scroll: 0, max: 0, scrollable: 0, scrolled: 0, voice: 'IDLE' }
+  let testProbe = null
+  const updateTestProbe = () => {
+    if (!uiTest) return
+    if (!testProbe) {
+      testProbe = document.createElement('div')
+      testProbe.id = 'ama-test-probe'
+      testProbe.style.cssText = 'position:fixed;left:2px;top:2px;z-index:100000;padding:2px 3px;background:#000;color:#fff;font:9px monospace;pointer-events:none;'
+      document.body.appendChild(testProbe)
+    }
+    testProbe.textContent = `AMA_TEST_PROBE ready=${testState.ready} reactions=${testState.reactions} audio=${testState.audio} scroll=${Math.round(testState.scroll)} max=${Math.round(testState.max)} scrollable=${testState.scrollable} scrolled=${testState.scrolled} voice=${testState.voice}`
+  }
+  const onDiagnostic = (event) => {
+    if (!uiTest) return
+    const d = event.detail || {}
+    testState.voice = `${d.stage || 'IDLE'}-${d.status || 'OK'}`
+    if (d.stage === 'PLAY' && d.status === 'OK') testState.audio += 1
+    updateTestProbe()
+  }
+  const onTranscriptScroll = (event) => {
+    if (!uiTest) return
+    testState.scroll = Number(event.detail?.scrollTop || 0)
+    testState.max = Number(event.detail?.maxScroll || 0)
+    testState.scrollable = event.detail?.scrollable ? 1 : 0
+    if (testState.scroll > 0) testState.scrolled = 1
+    updateTestProbe()
+  }
+  window.addEventListener('ama-voice-diagnostics', onDiagnostic)
+  window.addEventListener('ama-transcript-scroll', onTranscriptScroll)
+  updateTestProbe()
+
   const settings = createSettings()
-  // The mobile product has no exposed voice-off control. A stale desktop/iOS
-  // localStorage value must never silently disable all tap OGG and TTS output.
   if (isIOS && settings.get('voice') === false) settings.set('voice', true)
   applyVisualSettings(stage, canvas, settings)
   const dialogue = createDialogue()
@@ -50,10 +81,9 @@ async function boot() {
   let app = null
   let pet = null
   let consoleOpen = false
-  // Conversation/TTS owns this lock. Idle character taps do not acquire it, so
-  // repeated physical taps can advance the 45-clip shuffle without waiting for
-  // a previous tap coroutine to finish.
   let busy = false
+  let lastPrimaryTapAt = -Infinity
+  let lastAnyTapAt = -Infinity
 
   function viewportSize() {
     const rect = stage.getBoundingClientRect()
@@ -89,11 +119,18 @@ async function boot() {
 
   async function playTouch(hit) {
     if (!pet || busy || settings.get('voice') === false) return
-    // Prime WebAudio from the gesture for lip sync, but audible playback no
-    // longer depends on this promise resolving. The player has a direct media
-    // fallback specifically for WKWebView.
+    const now = performance.now()
+    if (now - lastAnyTapAt < 140) return
+    lastAnyTapAt = now
+
     void unlockVoiceAudio()
     const reaction = nextTouchReaction(hit?.area || 'body')
+    if (uiTest) {
+      testState.reactions += 1
+      updateTestProbe()
+    }
+    beginVoiceTrace('TOUCH OGG')
+    voiceDiagnostic('CONFIG', 'SKIP', reaction.voice)
     applyReaction(pet, reaction, { playMotion: true })
 
     const result = await playReferenceVoice(reaction.voice, {
@@ -113,57 +150,58 @@ async function boot() {
     }
   }
 
-  /*
-   * Native iOS has exactly one character-tap owner: the stage/canvas capture
-   * path below. Cubism's pointerup callback is still used on desktop, but on
-   * WKWebView it can disappear when a transparent HUD layer or gesture recognizer
-   * wins the sequence. A stage fallback mirrors the proven mobile fix from main
-   * while leaving the CALL UI and its scrollable subtitle as separate targets.
-   */
-  let lastStageTapAt = 0
+  function pointHit(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect()
+    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null
+    const x = (clientX - rect.left) * (canvas.width / Math.max(1, rect.width))
+    const y = (clientY - rect.top) * (canvas.height / Math.max(1, rect.height))
+    let precise = false
+    try { precise = pet?.hitTest?.(x, y) || false } catch {}
+    const normalizedY = (clientY - rect.top) / Math.max(1, rect.height)
+    const area = precise
+      ? String(precise).toLowerCase()
+      : normalizedY < 0.42 ? 'head' : normalizedY < 0.63 ? 'mouth' : 'body'
+    return { area, source: precise ? 'stage-hit-test' : 'stage-coordinate', model: pet, x, y }
+  }
+
+  function interactiveTarget(target) {
+    return !!target?.closest?.('button,input,textarea,form,.mobile-dock,.mobile-sheet,.mobile-sheet-backdrop,.call-subtitle,.call-scroll-track,.boot')
+  }
+
+  /* Cubism owns the primary tap path exactly as it does on main. The stage
+     fallback runs only after bubbling confirms Cubism did not claim the same
+     gesture; it uses coordinates + Live2D hit testing and never depends on the
+     DOM target being exactly the canvas. */
   let pointerStart = null
-  const isCharacterTarget = (target) => target === stage || target === canvas
-  const areaFromPoint = (event) => {
-    const rect = stage.getBoundingClientRect()
-    const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)))
-    if (y < 0.42) return 'head'
-    if (y < 0.63) return 'mouth'
-    return 'body'
-  }
-  const fireStageTap = (event) => {
-    if (!isIOS || !isCharacterTarget(event.target)) return
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
-    if (now - lastStageTapAt < 220) return
-    lastStageTapAt = now
-    void unlockVoiceAudio()
-    void playTouch({ area: areaFromPoint(event), source: 'stage', model: pet })
-  }
   function mountIosStageTapFallback() {
     if (!isIOS) return () => {}
     const onPointerDown = (event) => {
-      if (!isCharacterTarget(event.target)) return
-      pointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY }
+      if (interactiveTarget(event.target)) return
+      const hit = pointHit(event.clientX, event.clientY)
+      if (!hit) return
+      pointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY, at: performance.now() }
       void unlockVoiceAudio()
     }
     const onPointerUp = (event) => {
       const start = pointerStart
       pointerStart = null
-      if (!start || start.id !== event.pointerId || !isCharacterTarget(event.target)) return
+      if (!start || start.id !== event.pointerId || interactiveTarget(event.target)) return
       if (Math.abs(event.clientX - start.x) + Math.abs(event.clientY - start.y) > 14) return
-      fireStageTap(event)
+      const hit = pointHit(event.clientX, event.clientY)
+      if (!hit) return
+      queueMicrotask(() => {
+        if (lastPrimaryTapAt >= start.at) return
+        void playTouch(hit)
+      })
     }
     const onPointerCancel = () => { pointerStart = null }
-    const onClick = (event) => fireStageTap(event)
-
-    stage.addEventListener('pointerdown', onPointerDown, true)
-    stage.addEventListener('pointerup', onPointerUp, true)
-    stage.addEventListener('pointercancel', onPointerCancel, true)
-    stage.addEventListener('click', onClick, true)
+    stage.addEventListener('pointerdown', onPointerDown)
+    stage.addEventListener('pointerup', onPointerUp)
+    stage.addEventListener('pointercancel', onPointerCancel)
     return () => {
-      stage.removeEventListener('pointerdown', onPointerDown, true)
-      stage.removeEventListener('pointerup', onPointerUp, true)
-      stage.removeEventListener('pointercancel', onPointerCancel, true)
-      stage.removeEventListener('click', onClick, true)
+      stage.removeEventListener('pointerdown', onPointerDown)
+      stage.removeEventListener('pointerup', onPointerUp)
+      stage.removeEventListener('pointercancel', onPointerCancel)
     }
   }
 
@@ -174,10 +212,6 @@ async function boot() {
     applyReaction(pet, reaction, { playMotion: true })
     hud.aiLog(line)
     hud.rineHer(line, { read: true, quick: true })
-
-    // CALL is a readable transcript surface, not karaoke. Show the complete
-    // Chinese reply as soon as the LLM returns; the existing iOS CALL box stays
-    // visually unchanged and can now scroll reliably while speech is playing.
     presentLine(line, { log: false, rine: false })
 
     if (settings.get('voice') === false) {
@@ -193,10 +227,8 @@ async function boot() {
       translateTts: translateForKurisuTts,
       mood: reaction.emotion,
       onLevel: setMouth,
-      // Keep the stable player contract: one start callback and one final end
-      // callback. Long-reply chunking stays entirely inside the voice pipeline.
       onStart: () => {},
-      onEnd: () => resolveEnd(),
+      onEnd: (meta) => resolveEnd(meta),
     })
 
     if (route.played) {
@@ -248,8 +280,6 @@ async function boot() {
     onResize() {},
     onOpacity() {},
     onVoice() {
-      // Desktop HUD compatibility only. On the iOS CALL product the mobile
-      // surface keeps role voice enabled permanently.
       if (isIOS) {
         settings.set('voice', true)
         hud.setVoiceState(true)
@@ -294,10 +324,10 @@ async function boot() {
   })
 
   app = await createPetAppCubism2(canvas, {
-    // iOS uses the stage capture fallback above as the sole gesture owner.
-    // Keeping Cubism's callback as well would play two different OGG clips for
-    // one physical touch. Non-iOS previews retain precise Live2D hit testing.
-    onTap: ({ hit }) => { if (!isIOS) void playTouch(hit) },
+    onTap: ({ hit }) => {
+      lastPrimaryTapAt = performance.now()
+      void playTouch({ ...hit, source: hit?.source || 'live2d' })
+    },
     onLoaded: () => hud.sysLog('Kurisu / Cubism2 载入完成'),
   })
   pet = app.getManager()
@@ -312,35 +342,69 @@ async function boot() {
   window.addEventListener('resize', syncViewport)
   window.addEventListener('orientationchange', syncViewport)
 
+  if (uiTest) setTimeout(() => document.getElementById('boot-connect')?.click(), 120)
   await bootDone
   hud.toggleConsole(true)
   hud.setTab('call')
   hud.setCallState('active')
   hud.setLinkStatus(true, 'LINK OK')
-  hud.sysLog('iOS core synced with main: LLM / OGG router / Kurisu TTS / lipsync ready')
+  hud.sysLog('iOS core synced with main interaction ownership + diagnostic voice path')
   hud.sysLog('语言链路：中文输入 / 中文字幕 → 日语角色语音')
 
+  // Match main: block only until hello has STARTED. Never wait on the ended DOM
+  // event to release the whole application. Player-level watchdogs still close
+  // every onEnd waiter if WebKit loses the event later.
   busy = true
-  try {
-    presentLine('Connection established.', { log: false, rine: false })
-    let resolveEnd
-    const ended = new Promise((resolve) => { resolveEnd = resolve })
-    const hello = await playReferenceVoice('hello', { onLevel: setMouth, onEnd: () => resolveEnd() })
-    if (hello.played) await ended
-  } finally {
-    busy = false
-    setMouth(0)
-    hud.setCallSubtitle('')
-  }
+  presentLine('Connection established.', { log: false, rine: false })
+  beginVoiceTrace('CONNECT OGG')
+  voiceDiagnostic('CONFIG', 'SKIP', 'hello')
+  const hello = await playReferenceVoice('hello', { onLevel: setMouth })
+  busy = false
+  if (!hello.played) hud.sysLog(`Connect OGG playback failed: ${hello.error?.message || 'unknown'}`)
+  if (!uiTest) setTimeout(() => hud.setCallSubtitle(''), 2600)
 
   if (usingRemoteApi()) {
     checkServer().then((ok) => hud.sysLog(ok ? 'LLM API 已连接' : 'LLM API 配置存在，但当前连接失败'))
   }
 
+  async function runUiTestMode() {
+    if (!uiTest) return
+    testState.ready = 1
+    updateTestProbe()
+    if (uiTestMode === 'scroll') {
+      hud.setCallSubtitle('这是用于 iOS WKWebView 实机滚动回归测试的长文本。'.repeat(80))
+      await wait(250)
+      updateTestProbe()
+    }
+    if (uiTestMode === 'tts') {
+      await wait(150)
+      beginVoiceTrace('TTS TRANSPORT TEST')
+      setTtsConfig({ endpoint: 'http://127.0.0.1:9882', enabled: true })
+      voiceDiagnostic('CONFIG', 'OK', 'mock endpoint')
+      voiceDiagnostic('HEALTH', 'WORK')
+      const health = await checkTtsServer()
+      if (!health.ok) {
+        voiceDiagnostic('HEALTH', 'FAIL', health.reason || String(health.status || 'unreachable'))
+        return
+      }
+      voiceDiagnostic('HEALTH', 'OK', `HTTP ${health.status || 200}`)
+      voiceDiagnostic('TRANSLATE', 'SKIP', 'fixture Japanese')
+      const generated = await synthesizeTts('接続テストです。', { language: 'ja', mood: 'normal' })
+      let resolveEnd
+      const ended = new Promise((resolve) => { resolveEnd = resolve })
+      const result = await playAudioBlob(generated.blob, { onEnd: resolveEnd })
+      if (result.played) await ended
+    }
+  }
+  void runUiTestMode()
+
   window.__amaPet = { pet, app, hud, bubble, settings, mobileUi, brain, playTouch }
   window.addEventListener('beforeunload', () => {
     unmountStageTap()
     unmountTranscriptScroll()
+    mobileUi?.dispose?.()
+    window.removeEventListener('ama-voice-diagnostics', onDiagnostic)
+    window.removeEventListener('ama-transcript-scroll', onTranscriptScroll)
     app?.dispose?.()
   })
 }

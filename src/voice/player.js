@@ -1,11 +1,14 @@
 import { getVoiceAudioUrl, getVoiceCatalogEntry } from './catalog.js'
+import { voiceDiagnostic } from './diagnostics.js'
 
 let activeAudio = null
 let activeObjectUrl = ''
+let activeFinish = null
 let audioCtx = null
 let analyserFrame = null
 let analyser = null
 let activeLevelCallback = null
+let activeWatchdog = null
 
 function releaseObjectUrl() {
   if (!activeObjectUrl) return
@@ -19,6 +22,11 @@ function stopAnalyser(onLevel = activeLevelCallback) {
   analyser = null
   activeLevelCallback = null
   onLevel?.(0)
+}
+
+function clearWatchdog() {
+  if (activeWatchdog) clearTimeout(activeWatchdog)
+  activeWatchdog = null
 }
 
 /** Prime WebAudio while a real user gesture is still active. */
@@ -41,14 +49,8 @@ export async function unlockVoiceAudio() {
   }
 }
 
-/*
- * Lip sync must never be allowed to gate sound output on iOS.  The previous
- * implementation awaited AudioContext resume and graph creation before calling
- * HTMLMediaElement.play(); after LLM/TTS latency that extra async boundary could
- * lose the WKWebView playback path.  Attach the analyser only when WebAudio is
- * already running.  Otherwise leave the media element completely outside the
- * graph and let it play directly through WebKit.
- */
+/* Lip sync is opportunistic. It must never be allowed to block or delay the
+   audible HTMLMediaElement path on WKWebView. */
 function monitor(audio, onLevel) {
   if (!onLevel) return false
   try {
@@ -68,8 +70,6 @@ function monitor(audio, onLevel) {
     const tick = () => {
       if (!analyser) { onLevel(0); return }
       if (audio.ended) { stopAnalyser(onLevel); return }
-      // Playback starts after monitor() is installed. A paused first frame is
-      // expected; keep sampling instead of permanently dropping lip sync.
       if (audio.paused) { analyserFrame = requestAnimationFrame(tick); return }
       analyser.getByteTimeDomainData(data)
       let sum = 0
@@ -91,11 +91,15 @@ function monitor(audio, onLevel) {
   }
 }
 
-export function stopVoicePlayback() {
+export function stopVoicePlayback(reason = 'interrupted') {
+  const finish = activeFinish
+  activeFinish = null
+  clearWatchdog()
   try { activeAudio?.pause() } catch {}
   try { window.speechSynthesis?.cancel() } catch {}
   stopAnalyser()
   activeAudio = null
+  try { finish?.({ interrupted: true, reason }) } catch {}
   releaseObjectUrl()
 }
 
@@ -106,11 +110,12 @@ export async function playAudioUrl(url, {
   onEnd = null,
   objectUrl = false,
 } = {}) {
-  stopVoicePlayback()
+  stopVoicePlayback('replaced')
   if (!url) {
     onLevel?.(0)
-    onEnd?.()
-    return { played: false }
+    voiceDiagnostic('PLAY', 'FAIL', 'empty URL')
+    onEnd?.({ failed: true, reason: 'empty-url' })
+    return { played: false, error: new Error('empty audio URL') }
   }
 
   const audio = new Audio()
@@ -122,26 +127,49 @@ export async function playAudioUrl(url, {
   audio.src = url
 
   let finished = false
-  const finish = () => {
+  const finish = (meta = {}) => {
     if (finished) return
     finished = true
+    clearWatchdog()
+    if (activeFinish === finish) activeFinish = null
     stopAnalyser(onLevel)
     if (activeAudio === audio) activeAudio = null
     if (objectUrl && activeObjectUrl === url) releaseObjectUrl()
-    onEnd?.()
-  }
-  audio.onended = finish
-  audio.onerror = finish
 
-  // Synchronous and optional. Audible playback is the primary contract.
+    if (meta.failed) voiceDiagnostic('END', 'FAIL', meta.reason || 'media error')
+    else if (meta.timedOut) voiceDiagnostic('END', 'FAIL', 'watchdog timeout')
+    else if (meta.interrupted) voiceDiagnostic('END', 'SKIP', meta.reason || 'interrupted')
+    else voiceDiagnostic('END', 'OK')
+    onEnd?.(meta)
+  }
+  activeFinish = finish
+
+  const armWatchdog = (durationSec = 0) => {
+    clearWatchdog()
+    const knownMs = Number.isFinite(durationSec) && durationSec > 0 ? durationSec * 1000 + 5000 : 120000
+    const timeoutMs = Math.max(8000, Math.min(180000, knownMs))
+    activeWatchdog = setTimeout(() => finish({ timedOut: true, reason: 'watchdog' }), timeoutMs)
+  }
+
+  audio.onended = () => finish({ ended: true })
+  audio.onerror = () => {
+    const mediaError = audio.error?.message || (audio.error?.code ? `media error ${audio.error.code}` : 'media error')
+    finish({ failed: true, reason: mediaError })
+  }
+  audio.onloadedmetadata = () => armWatchdog(audio.duration)
+
   const lipsyncActive = monitor(audio, onLevel)
+  voiceDiagnostic('PLAY', 'WORK', objectUrl ? 'blob URL' : 'bundled media')
   try {
     await audio.play()
     const durationSec = Number.isFinite(audio.duration) ? audio.duration : 0
+    armWatchdog(durationSec)
+    voiceDiagnostic('PLAY', 'OK', lipsyncActive ? 'media + lipsync' : 'media direct')
     onStart?.({ audio, durationSec, lipsyncActive })
     return { played: true, audio, durationSec, lipsyncActive }
   } catch (error) {
-    finish()
+    voiceDiagnostic('PLAY', 'FAIL', error?.message || String(error))
+    finish({ failed: true, reason: error?.message || 'play rejected' })
     return { played: false, error, lipsyncActive: false }
   }
 }
@@ -150,7 +178,8 @@ export async function playReferenceVoice(id, opts = {}) {
   const entry = getVoiceCatalogEntry(id)
   if (!entry) {
     opts.onLevel?.(0)
-    opts.onEnd?.()
+    voiceDiagnostic('PLAY', 'FAIL', `unknown OGG ${id || '(empty)'}`)
+    opts.onEnd?.({ failed: true, reason: 'unknown-reference-voice' })
     return { played: false, entry: null }
   }
   const result = await playAudioUrl(getVoiceAudioUrl(id), opts)
@@ -160,7 +189,8 @@ export async function playReferenceVoice(id, opts = {}) {
 export async function playAudioBlob(blob, opts = {}) {
   if (!(blob instanceof Blob) || !blob.size) {
     opts.onLevel?.(0)
-    opts.onEnd?.()
+    voiceDiagnostic('DECODE', 'FAIL', 'empty audio blob')
+    opts.onEnd?.({ failed: true, reason: 'empty-audio-blob' })
     return { played: false, error: new Error('empty TTS audio') }
   }
   return playAudioUrl(URL.createObjectURL(blob), { ...opts, objectUrl: true })

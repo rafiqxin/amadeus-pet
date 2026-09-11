@@ -1,0 +1,44 @@
+name: AmadeusHarness
+options:
+  bundleIdPrefix: com.rafiqxin
+  deploymentTarget:
+    iOS: '16.0'
+settings:
+  base:
+    SWIFT_VERSION: 5.0
+    CODE_SIGNING_ALLOWED: NO
+targets:
+  AmadeusHarness:
+    type: application
+    platform: iOS
+    sources:
+      - path: Harness
+      - path: ../dist
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rafiqxin.amadeus.harness
+        INFOPLIST_FILE: Harness/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: '1,2'
+  AmadeusHarnessUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: AmadeusHarness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rafiqxin.amadeus.harness.uitests
+        TEST_TARGET_NAME: AmadeusHarness
+schemes:
+  AmadeusHarness:
+    build:
+      targets:
+        AmadeusHarness: all
+        AmadeusHarnessUITests: [test]
+    test:
+      targets:
+        - name: AmadeusHarnessUITests

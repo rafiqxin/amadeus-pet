@@ -1,0 +1,50 @@
+/* Interaction-only additions for the retained iOS visual language. */
+body.mobile-ios .mobile-sheet.dragging {
+  transition: none !important;
+}
+
+body.mobile-ios .mobile-sheet-grab {
+  position: relative;
+  width: 68px;
+  height: 20px;
+  margin: -4px auto 4px;
+  background: transparent !important;
+  border-radius: 10px;
+  touch-action: none;
+  cursor: grab;
+  pointer-events: auto;
+}
+body.mobile-ios .mobile-sheet-grab::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  width: 42px;
+  height: 4px;
+  transform: translateX(-50%);
+  border-radius: 4px;
+  background: rgba(255,255,255,.22);
+}
+body.mobile-ios .mobile-sheet-grab:active {
+  cursor: grabbing;
+}
+
+body.mobile-ios .mobile-voice-diagnostics {
+  max-height: 92px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid rgba(224,151,17,.20);
+  border-radius: 9px;
+  background: rgba(0,0,0,.28);
+  color: #c8b58f;
+  font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+  -webkit-overflow-scrolling: touch;
+  user-select: text;
+  -webkit-user-select: text;
+}
+body.mobile-ios .mobile-voice-diagnostics[data-status="FAIL"] {
+  color: #ffb0a1;
+  border-color: rgba(255,96,72,.35);
+}

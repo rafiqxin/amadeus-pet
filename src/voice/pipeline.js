@@ -1,7 +1,8 @@
 import { getVoiceCatalogEntry } from './catalog.js'
 import { localVoiceDecision, finalizeVoiceRoute } from './semantic-router.js'
 import { playReferenceVoice, playAudioBlob, stopVoicePlayback } from './player.js'
-import { synthesizeTts, ttsConfigured } from './tts-client.js'
+import { synthesizeTts, ttsConfigured, checkTtsServer } from './tts-client.js'
+import { beginVoiceTrace, voiceDiagnostic } from './diagnostics.js'
 
 const LONG_REPLY_CLASSIFIER_LIMIT = 88
 const LONG_REPLY_TTS_THRESHOLD = 92
@@ -59,13 +60,20 @@ export function splitReplyForTts(text, maxChars = TTS_SOURCE_CHUNK_CHARS) {
 }
 
 async function japaneseFor(sourceText, route, translateTts, signal, useRouteTranslation = false) {
-  let spokenJapanese = useRouteTranslation ? String(route.ttsJa || '').trim() : ''
-  if (!spokenJapanese && containsJapanese(sourceText)) spokenJapanese = sourceText
-  if (!spokenJapanese && typeof translateTts === 'function') {
-    spokenJapanese = String(await translateTts(sourceText, signal) || '').trim()
+  voiceDiagnostic('TRANSLATE', 'WORK', `${String(sourceText || '').length} zh chars`)
+  try {
+    let spokenJapanese = useRouteTranslation ? String(route.ttsJa || '').trim() : ''
+    if (!spokenJapanese && containsJapanese(sourceText)) spokenJapanese = sourceText
+    if (!spokenJapanese && typeof translateTts === 'function') {
+      spokenJapanese = String(await translateTts(sourceText, signal) || '').trim()
+    }
+    if (!spokenJapanese) throw new Error('Japanese TTS translation unavailable')
+    voiceDiagnostic('TRANSLATE', 'OK', `${spokenJapanese.length} ja chars`)
+    return spokenJapanese
+  } catch (error) {
+    voiceDiagnostic('TRANSLATE', 'FAIL', error?.message || String(error))
+    throw error
   }
-  if (!spokenJapanese) throw new Error('Japanese TTS translation unavailable')
-  return spokenJapanese
 }
 
 async function playBlobUntilEnded(blob, { onLevel = null, onStart = null } = {}) {
@@ -74,10 +82,11 @@ async function playBlobUntilEnded(blob, { onLevel = null, onStart = null } = {})
   const result = await playAudioBlob(blob, {
     onLevel,
     onStart,
-    onEnd: () => resolveEnd(),
+    onEnd: (meta) => resolveEnd(meta),
   })
   if (!result.played) return result
-  await ended
+  const meta = await ended
+  if (meta?.failed || meta?.timedOut) return { ...result, played: false, error: new Error(meta.reason || 'audio ended abnormally') }
   return result
 }
 
@@ -94,7 +103,7 @@ export async function routeAndSpeak(text, {
 } = {}) {
   const reply = String(text || '').trim()
   if (!reply) return { kind: 'silent', played: false }
-  stopVoicePlayback()
+  stopVoicePlayback('new-route')
 
   const local = localVoiceDecision(reply, 0.92)
   let llmDecision = null
@@ -106,39 +115,48 @@ export async function routeAndSpeak(text, {
     : finalizeVoiceRoute(reply, llmDecision, { localThreshold: 0.92, llmThreshold: 0.86 })
 
   if (route.kind === 'ogg' && route.id && getVoiceCatalogEntry(route.id)) {
+    beginVoiceTrace('LLM OGG')
+    voiceDiagnostic('CONFIG', 'SKIP', route.id)
     const result = await playReferenceVoice(route.id, { onLevel, onStart, onEnd })
     return { ...route, ...result }
   }
 
+  beginVoiceTrace('KURISU TTS')
   if (!ttsConfigured()) {
+    voiceDiagnostic('CONFIG', 'FAIL', 'endpoint missing/disabled')
     onLevel?.(0)
-    onEnd?.()
+    onEnd?.({ failed: true, reason: 'tts-not-configured' })
     return { ...route, kind: 'text', played: false, error: 'TTS not configured' }
   }
+  voiceDiagnostic('CONFIG', 'OK', 'endpoint configured')
+
+  voiceDiagnostic('HEALTH', 'WORK')
+  const health = await checkTtsServer({ signal })
+  if (!health.ok) {
+    const detail = health.reason || (health.status ? `HTTP ${health.status}` : 'unreachable')
+    voiceDiagnostic('HEALTH', 'FAIL', detail)
+    onLevel?.(0)
+    onEnd?.({ failed: true, reason: detail })
+    return { ...route, kind: 'text', played: false, error: `TTS health failed: ${detail}` }
+  }
+  voiceDiagnostic('HEALTH', 'OK', health.status ? `HTTP ${health.status}` : 'ready')
 
   try {
-    // Preserve the exact alpha.2 behaviour for ordinary short replies. This is
-    // the path already verified on real iOS hardware: one translation, one WAV,
-    // one native bridge transfer, one HTMLMediaElement playback.
     if (reply.length <= LONG_REPLY_TTS_THRESHOLD) {
       const spokenJapanese = await japaneseFor(reply, route, translateTts, signal, true)
       const generated = await synthesizeTts(spokenJapanese, { language: 'ja', mood, signal })
       const result = await playAudioBlob(generated.blob, { onLevel, onStart, onEnd })
       return {
         ...route,
-        kind: 'tts',
+        kind: result.played ? 'tts' : 'text',
         language: 'ja',
         spokenText: spokenJapanese,
         engine: generated.engine,
+        audioBytes: generated.blob.size,
         ...result,
       }
     }
 
-    // Long replies use deliberately conservative sequential chunks. We do NOT
-    // pipeline/concurrently pre-render the next request yet: alpha.3 proved that
-    // changing player lifetime and TTS scheduling at the same time is too risky
-    // on WKWebView. Reliability first; latency optimisation can follow after
-    // this path has passed physical-device testing.
     const chunks = splitReplyForTts(reply)
     const spokenParts = []
     let engine = ''
@@ -172,7 +190,7 @@ export async function routeAndSpeak(text, {
       onSegmentEnd?.({ index, total: chunks.length, text: sourceText, spokenText: spokenJapanese })
     }
 
-    onEnd?.()
+    onEnd?.({ ended: true })
     return {
       ...route,
       kind: 'tts',
@@ -185,7 +203,7 @@ export async function routeAndSpeak(text, {
     }
   } catch (error) {
     onLevel?.(0)
-    onEnd?.()
+    onEnd?.({ failed: true, reason: error?.message || String(error) })
     return { ...route, kind: 'text', played: false, error: error?.message || String(error) }
   }
 }
