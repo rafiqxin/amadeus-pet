@@ -23,8 +23,8 @@ assert.doesNotMatch(scrollCss, /\.call-scroll-track/,
   'scroll rail styling must not come back')
 assert.doesNotMatch(scrollCss, /\.call-scroll-thumb/,
   'scroll thumb styling must not come back')
-assert.match(scrollCss, /\.call-subtitle\s*\{[\s\S]*?touch-action:\s*pan-y/,
-  'WKWebView only routes a vertical pan to the transcript when it advertises pan-y')
+assert.match(scrollCss, /\.call-subtitle\s*\{[\s\S]*?touch-action:\s*none/,
+  'WKWebView must not claim the pan: with pan-y it swallows touchmove and its own scrolling does not move this element')
 assert.match(scrollCss, /\.call-subtitle\s*\{[\s\S]*?overflow-y:\s*auto\s*!important/,
   'the transcript must remain a real scroll container')
 assert.match(scrollCss, /\.call-subtitle\s*\{[\s\S]*?-webkit-overflow-scrolling:\s*touch/,

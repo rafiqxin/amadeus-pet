@@ -146,7 +146,7 @@ jobs:
           grep -q "pointHit(event.clientX, event.clientY)" src/main.js
           ! grep -q "target === stage || target === canvas" src/main.js
           grep -q "ama-transcript-scroll" src/ui/ios-call-scroll.js
-          grep -q "touch-action: pan-y" src/ui/ios-call-fixes.css
+          grep -q "touch-action: none" src/ui/ios-call-fixes.css
           ! grep -q "call-scroll-track" src/ui/ios-call-scroll.js
           ! grep -q "call-scroll-thumb" src/ui/ios-call-scroll.js
           grep -q "onTouchMove" src/ui/ios-call-scroll.js

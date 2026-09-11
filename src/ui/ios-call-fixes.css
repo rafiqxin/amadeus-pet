@@ -11,11 +11,17 @@ body.mobile-ios.console-open.call-mode .hud-call {
 
 /* The transcript is scrolled with a finger, so it owns its own gestures. No
    scrollbar is drawn: the CALL frame is a hand-drawn surface and a rail on top
-   of it reads as a foreign widget. `touch-action: pan-y` plus the momentum
-   scrolling below is what lets WKWebView hand the gesture to this element. */
+   of it reads as a foreign widget.
+ *
+ * `touch-action: none` is deliberate, not an oversight. With `pan-y` WKWebView
+ * claims the pan for native scrolling and never delivers touchmove, and its
+ * native scrolling does not actually move this element — that is why the earlier
+ * revision needed a custom widget at all. The one gesture that ever worked on
+ * device was a drag on the thumb, and the thumb was `touch-action: none` so the
+ * JS handler owned it. The handler now owns the whole box the same way. */
 body.mobile-ios.console-open.call-mode .call-subtitle {
   pointer-events: auto !important;
-  touch-action: pan-y;
+  touch-action: none;
   -webkit-overflow-scrolling: touch;
   overflow-x: hidden !important;
   overflow-y: auto !important;
