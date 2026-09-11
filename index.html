@@ -3,14 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>AMA·DEUS Desktop Pet</title>
+  <meta name="theme-color" content="#000000" />
+  <title>AMA·DEUS iOS</title>
 </head>
 <body>
   <div id="stage">
-    <canvas id="l2d-canvas"></canvas>
-    <canvas id="l2d-canvas2" style="display:none"></canvas>
+    <!-- Keep the established iOS CALL/HUD surface, but production now uses
+         only the Kurisu Cubism 2 renderer. -->
+    <canvas id="l2d-canvas2"></canvas>
     <div id="hud-root">
-      <!-- direct chat bar under the character -->
       <div id="chat-bar">
         <form id="chat-form">
           <span class="chat-prompt">&gt;</span>
@@ -20,9 +21,6 @@
       </div>
     </div>
   </div>
-  <!-- Live2D Cubism Core 5 (classic global script, must load before the bundle) -->
-  <script src="./Core/live2dcubismcore.min.js"></script>
-  <!-- Live2D Cubism 2.1 framework (legacy runtime for .moc models) -->
   <script src="./live2d.min.js"></script>
   <script type="module" src="/src/main.js"></script>
 </body>

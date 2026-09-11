@@ -7,8 +7,11 @@ on:
     paths:
       - '.github/workflows/build-ios-call-preview.yml'
       - 'src/**'
+      - 'models/kurisu/**'
+      - 'public/Resources/amadeus-reference/**'
       - 'index.html'
       - 'package.json'
+      - 'package-lock.json'
       - 'vite.config.js'
   workflow_dispatch:
 
@@ -18,7 +21,7 @@ permissions:
 jobs:
   build-ipa:
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -27,33 +30,19 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: Install renderer and Capacitor dependencies
         run: |
           npm ci
-          # Keep the native plugin in the generated app dependency graph so
-          # Capacitor links the iOS implementation instead of only bundling JS.
           npm install --save-exact @capacitor/core@7 @capacitor/ios@7 @capacitor-community/speech-recognition@7.0.1
           npm install --save-dev --save-exact @capacitor/cli@7
           npm ls @capacitor/core @capacitor/ios @capacitor-community/speech-recognition
-
-      - name: Open mobile CALL route
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("index.html")
-          s = p.read_text()
-          needle = '<script type="module" src="/src/main.js"></script>'
-          inject = '<script>location.hash = "#call";</script>\n  ' + needle
-          if needle not in s:
-              raise SystemExit("main.js script tag not found")
-          p.write_text(s.replace(needle, inject))
-          PY
 
       - name: Bundle 45 Amadeus reference voice clips
         shell: bash
         run: |
           set -euo pipefail
           dst="public/Resources/amadeus-voices"
+          rm -rf "$dst"
           mkdir -p "$dst"
           files=(
             hello daga_kotowaru devilish_pervert i_guess nice pervert_confirmed sorry sounds_tough this_guy_hopeless
@@ -66,21 +55,43 @@ jobs:
           )
           base="https://raw.githubusercontent.com/rafiqxin/Amadeus/master/app/src/main/res/raw"
           for f in "${files[@]}"; do
-            curl -L --fail --retry 3 "$base/$f.ogg" -o "$dst/$f.ogg"
+            curl -L --fail --retry 5 --retry-delay 2 "$base/$f.ogg" -o "$dst/$f.ogg"
             test -s "$dst/$f.ogg"
           done
-          count=$(find "$dst" -name '*.ogg' -type f | wc -l | tr -d ' ')
-          test "$count" = "45"
-          echo "Bundled $count Amadeus reference voice clips"
+          test "$(find "$dst" -name '*.ogg' -type f | wc -l | tr -d ' ')" = "45"
 
-      - name: Build renderer
+      - name: Verify iOS voice contract source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "TTS_OUTPUT_LANGUAGE = 'ja'" src/voice/tts-client.js
+          grep -q "language: 'zh-CN'" src/ui/mobile.js
+          grep -q "CapacitorHttp" src/llm/client.js
+          grep -q "CapacitorHttp" src/voice/tts-client.js
+          grep -q "nextTouchReaction" src/main.js
+          grep -q "routeAndSpeak" src/main.js
+          if grep -q '"sound"[[:space:]]*:' models/kurisu/kurisu.model.json; then
+            echo 'Kurisu model still contains embedded motion audio' >&2
+            exit 1
+          fi
+
+      - name: Build iOS renderer
         run: npm run build:render
 
-      - name: Verify voice bundle
+      - name: Verify clean iOS bundle
+        shell: bash
         run: |
+          set -euo pipefail
+          test -f dist/live2d.min.js
+          test -f dist/models/kurisu/kurisu.model.json
           count=$(find dist/Resources/amadeus-voices -name '*.ogg' -type f | wc -l | tr -d ' ')
           test "$count" = "45"
-          echo "Verified $count voice clips in dist"
+          test ! -e dist/Core
+          test ! -e dist/models/Haru
+          test ! -e dist/models/Mao
+          test ! -e dist/models/Wanko
+          test ! -e dist/models/kurisu/sounds
+          echo "Verified iOS bundle: Kurisu/Cubism2 + $count reference voices"
 
       - name: Create Capacitor iOS shell
         run: |
@@ -100,28 +111,35 @@ jobs:
         run: |
           set -euo pipefail
           grep -R -q 'CapacitorCommunitySpeechRecognition' ios/App/Podfile ios/App/Podfile.lock
-          echo "SpeechRecognition native iOS pod is registered."
+          echo 'SpeechRecognition native iOS pod is registered.'
 
       - name: Use Amadeus launcher icon
         run: |
           ICON_SRC="$RUNNER_TEMP/amadeus-launcher.png"
           ICON_DST="ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"
-          curl -L --fail \
+          curl -L --fail --retry 5 \
             https://raw.githubusercontent.com/rafiqxin/Amadeus/master/app/src/main/ic_launcher-web.png \
             -o "$ICON_SRC"
           sips -z 1024 1024 "$ICON_SRC" --out "$ICON_DST" >/dev/null
           test -s "$ICON_DST"
 
-      - name: Configure full-screen app and speech permissions
+      - name: Configure iOS permissions and local TTS networking
+        shell: bash
         run: |
+          set -euo pipefail
           PLIST="ios/App/App/Info.plist"
           /usr/libexec/PlistBuddy -c "Add :UIStatusBarHidden bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIStatusBarHidden true" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :UIViewControllerBasedStatusBarAppearance bool false" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :UIViewControllerBasedStatusBarAppearance false" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || true
-          /usr/libexec/PlistBuddy -c "Add :NSSpeechRecognitionUsageDescription string 'AMA-DEUS uses speech recognition so you can talk to Kurisu.'" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSSpeechRecognitionUsageDescription 'AMA-DEUS uses speech recognition so you can talk to Kurisu.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSSpeechRecognitionUsageDescription string 'AMA-DEUS uses speech recognition so you can talk to Kurisu in Chinese.'" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSSpeechRecognitionUsageDescription 'AMA-DEUS uses speech recognition so you can talk to Kurisu in Chinese.'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'AMA-DEUS uses the microphone while you are speaking to Kurisu.'" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription 'AMA-DEUS uses the microphone while you are speaking to Kurisu.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 'AMA-DEUS uses your local network to reach the Kurisu Japanese TTS server you configure.'" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSLocalNetworkUsageDescription 'AMA-DEUS uses your local network to reach the Kurisu Japanese TTS server you configure.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$PLIST" || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$PLIST" || /usr/libexec/PlistBuddy -c "Set :NSAppTransportSecurity:NSAllowsLocalNetworking true" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :NSSpeechRecognitionUsageDescription" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :NSLocalNetworkUsageDescription" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :NSAppTransportSecurity:NSAllowsLocalNetworking" "$PLIST"
 
       - name: Build unsigned device app
         run: |
@@ -137,36 +155,38 @@ jobs:
             build
 
       - name: Package unsigned IPA
+        shell: bash
         run: |
+          set -euo pipefail
           APP="build/DerivedData/Build/Products/Release-iphoneos/App.app"
           test -d "$APP"
           rm -rf build/Payload
           mkdir -p build/Payload
           cp -R "$APP" build/Payload/
           cd build
-          zip -qry AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa Payload
-          shasum -a 256 AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa | tee AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa.sha256
+          zip -qry AMA-DEUS-iOS-v0.2.0-alpha.1-unsigned.ipa Payload
+          shasum -a 256 AMA-DEUS-iOS-v0.2.0-alpha.1-unsigned.ipa | tee AMA-DEUS-iOS-v0.2.0-alpha.1-unsigned.ipa.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned-IPA
+          name: AMA-DEUS-iOS-v0.2.0-alpha.1-unsigned-IPA
           path: |
-            build/AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa
-            build/AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa.sha256
+            build/AMA-DEUS-iOS-v0.2.0-alpha.1-unsigned.ipa
+            build/AMA-DEUS-iOS-v0.2.0-alpha.1-unsigned.ipa.sha256
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish GitHub prerelease
-        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release ios v0.1.1-alpha.1]')
+      - name: Publish iOS prerelease
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[release ios v0.2.0-alpha.1]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="ios-v0.1.1-alpha.1"
-          FILE="build/AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa"
-          SUM="build/AMA-DEUS-iOS-v0.1.1-alpha.1-unsigned.ipa.sha256"
+          TAG="ios-v0.2.0-alpha.1"
+          FILE="build/AMA-DEUS-iOS-v0.2.0-alpha.1-unsigned.ipa"
+          SUM="build/AMA-DEUS-iOS-v0.2.0-alpha.1-unsigned.ipa.sha256"
           gh release create "$TAG" "$FILE" "$SUM" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "AMA-DEUS iOS v0.1.1 alpha 1" \
-            --notes "iOS speech-input preview. Enables the Capacitor Community SpeechRecognition native plugin, adds microphone and speech-recognition privacy descriptions, and keeps the existing CALL UI, Live2D reactions, API configuration, 45 reference OGG reactions, and audio-driven lip sync. Unsigned IPA; user-side signing is required for installation." \
+            --title "AMA-DEUS iOS v0.2.0 alpha 1 · Main Voice Core Sync" \
+            --notes "Keeps the established iOS CALL/mobile UI while syncing main's internal AMA-DEUS voice stack: native zh-CN speech input, OpenAI-compatible LLM over CapacitorHttp, 45-clip semantic OGG routing, Japanese-only Kurisu TTS over native HTTP, single-voice playback, emotion-driven Live2D reactions, and audio-driven lip sync. Adds Local Network permission for a user-configured LAN TTS server. Unsigned IPA; user-side signing is required." \
             --prerelease

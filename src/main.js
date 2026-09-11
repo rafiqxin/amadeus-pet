@@ -1,321 +1,262 @@
-/* AMA·DEUS renderer entry. */
+/* AMA-DEUS iOS renderer: preserve the mobile CALL presentation while using
+   the same conversation / voice core as main. */
 import './style.css'
 
-import { createPetApp } from './live2d/app.js'
 import { createPetAppCubism2 } from './live2d/cubism2app.js'
-import * as Define from './live2d/define.js'
 import { mountHud } from './ui/hud.js'
 import { mountBubble } from './ui/bubble.js'
 import { mountBoot } from './ui/boot.js'
-import { mountInteractions } from './pet/interactions.js'
+import { mountMobileUi } from './ui/mobile.js'
 import { createDialogue } from './pet/dialogue.js'
 import { createSettings, applyVisualSettings } from './pet/settings.js'
-import { speak, voiceAvailable, matchReferenceVoice } from './pet/voice.js'
-import { planReaction, applyReaction } from './pet/reaction.js'
 import { playRingTone } from './pet/tone.js'
-import { chat, checkServer, llmAvailable } from './pet/llm.js'
-import { remember, recall } from './pet/memory.js'
-import { mountMobileUi } from './ui/mobile.js'
+import { planReaction, applyReaction } from './pet/reaction.js'
+import { nextTouchReaction } from './pet/touch-reactions.js'
+import {
+  chat,
+  checkServer,
+  usingRemoteApi,
+  classifyReferenceVoice,
+  translateForKurisuTts,
+} from './llm/client.js'
+import { routeAndSpeak } from './voice/pipeline.js'
+import { playReferenceVoice, stopVoicePlayback } from './voice/player.js'
 
-const MODELS = [
-  { dir: './models/kurisu/', json: 'kurisu.model.json', name: 'KURISU // 助手', format: 'cubism2' },
-  { dir: './models/Haru/', json: 'Haru.model3.json', name: 'HARU // 助手·A型', format: 'cubism5' },
-  { dir: './models/Mao/', json: 'Mao.model3.json', name: 'MAO // 观测型', format: 'cubism5' },
-  { dir: './models/Wanko/', json: 'Wanko.model3.json', name: 'WANKO // 吉祥物', format: 'cubism5' },
-]
+const MODEL_DIR = './models/kurisu/'
+const MODEL_FILE = 'kurisu.model.json'
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 async function boot() {
   const stage = document.getElementById('stage')
-  const canvas5 = document.getElementById('l2d-canvas')
-  const canvas2 = document.getElementById('l2d-canvas2')
+  const canvas = document.getElementById('l2d-canvas2')
   const hudRoot = document.getElementById('hud-root')
-  const ipc = window.amadeus
-
-  const settings = createSettings()
-  applyVisualSettings(stage, canvas5, settings)
-  applyVisualSettings(stage, canvas2, settings)
-
-  let pet = null
-  let app5 = null
-  let app2 = null
-  let modelIndex = 0
-  let firstLoad = false
+  if (!stage || !canvas || !hudRoot) throw new Error('iOS CALL surface is incomplete')
 
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
   document.body.classList.toggle('mobile-ios', isIOS)
 
+  const settings = createSettings()
+  applyVisualSettings(stage, canvas, settings)
+  const dialogue = createDialogue()
+  const bubble = mountBubble(hudRoot)
+
+  let app = null
+  let pet = null
+  let consoleOpen = false
+  let busy = false
+
   function viewportSize() {
-    if (isIOS) {
-      const r = stage.getBoundingClientRect()
-      return {
-        w: Math.max(1, Math.round(r.width || window.innerWidth || 393)),
-        h: Math.max(1, Math.round(r.height || window.innerHeight || 852)),
-      }
+    const rect = stage.getBoundingClientRect()
+    return {
+      w: Math.max(1, Math.round(rect.width || window.innerWidth || 393)),
+      h: Math.max(1, Math.round(rect.height || window.innerHeight || 852)),
     }
-    return { w: 480, h: 853 }
+  }
+  function resize() {
+    if (!app) return
+    const v = viewportSize()
+    app.resize(v.w, v.h)
+  }
+  function setMouth(level) { app?.setMouthOpen?.(level) }
+
+  function presentLine(text, { log = true, rine = true } = {}) {
+    const line = String(text || '').trim()
+    if (!line) return
+    if (!consoleOpen) bubble.say(line, Math.max(2600, Math.min(14000, line.length * 220)))
+    if (log) hud.aiLog(line)
+    hud.setCallSubtitle(line)
+    if (rine) hud.rineHer(line, { read: true, quick: true })
   }
 
-  const bubble = mountBubble(hudRoot)
-  const dialogue = createDialogue()
-  let bootScreen = null
-  const bootDone = new Promise((resolve) => {
-    bootScreen = mountBoot(hudRoot, {
-      onConnect: () => { playRingTone(); resolve() },
-      onCancel: () => ipc?.quit(),
-    })
-  })
+  function thinking() {
+    if (!consoleOpen) bubble.say('……', 60000)
+    hud.setCallSubtitle('……')
+  }
 
-  let currentTab = 'term'
-  let consoleOpen = false
+  async function playTouch(hit) {
+    if (!pet || busy || settings.get('voice') === false) return
+    busy = true
+    try {
+      const reaction = nextTouchReaction(hit?.area || 'body')
+      applyReaction(pet, reaction, { playMotion: true })
+      presentLine(reaction.text, { log: false, rine: false })
+      let resolveEnd
+      const ended = new Promise((resolve) => { resolveEnd = resolve })
+      const result = await playReferenceVoice(reaction.voice, {
+        onLevel: setMouth,
+        onEnd: () => resolveEnd(),
+      })
+      if (result.played) await ended
+      else setMouth(0)
+      await wait(180)
+    } finally {
+      busy = false
+      setMouth(0)
+    }
+  }
 
-  const sayLine = (line, duration, reactionHint = {}) => {
+  async function speakReply(reply, mood = 'normal') {
+    const line = String(reply || '').trim()
     if (!line) return
-    if (!consoleOpen) bubble.say(line, duration)
+    const reaction = planReaction(line, { mood })
+    applyReaction(pet, reaction, { playMotion: true })
     hud.aiLog(line)
-    hud.setCallSubtitle(line)
     hud.rineHer(line, { read: true, quick: true })
 
-    // LLM output is the semantic source. If it resembles one of the 45
-    // reference reactions, that line's original mood and OGG take priority.
-    const voiceMatch = matchReferenceVoice(line)
-    const reaction = planReaction(line, { ...reactionHint, voiceMatch })
-    applyReaction(pet, reaction, { playMotion: true })
+    if (settings.get('voice') === false) {
+      presentLine(line, { log: false, rine: false })
+      await wait(Math.max(2200, Math.min(12000, line.length * 210)))
+      return
+    }
 
-    const voiceOn = settings.get('voice') !== false && voiceAvailable()
-    const res = speak(line, {
-      enabled: voiceOn,
-      onLevel: (level) => pet?.setMouthOpen(level),
-      onEnd: () => pet?.setMouthOpen(0),
+    let resolveEnd
+    const ended = new Promise((resolve) => { resolveEnd = resolve })
+    let started = false
+    const route = await routeAndSpeak(line, {
+      classify: classifyReferenceVoice,
+      translateTts: translateForKurisuTts,
+      mood: reaction.emotion,
+      onLevel: setMouth,
+      onStart: () => {
+        started = true
+        presentLine(line, { log: false, rine: false })
+      },
+      onEnd: () => resolveEnd(),
     })
-    // Never fake mouth motion for text-only replies. Lip motion now comes
-    // exclusively from the actual OGG waveform (or native TTS in the future).
-    if (!res.played) pet?.setMouthOpen(0)
 
-    window.__amaLastReaction = { ...reaction, voicePlayed: !!res.played, voiceScore: voiceMatch?.score || 0 }
+    if (route.played) {
+      if (!started) presentLine(line, { log: false, rine: false })
+      await ended
+      await wait(300)
+    } else {
+      presentLine(line, { log: false, rine: false })
+      hud.sysLog(route.error ? `语音回退为文字：${route.error}` : '语音回退为文字')
+      await wait(Math.max(2200, Math.min(14000, line.length * 220)))
+    }
+    setMouth(0)
   }
 
-  let brainSeq = 0
-  let brainAbort = null
   async function brain(text) {
-    remember(text)
-    if (llmAvailable()) {
-      const mySeq = ++brainSeq
-      if (brainAbort) brainAbort.abort()
-      brainAbort = new AbortController()
-      const ctx = dialogue.bankHints(text)
-      const mems = recall(text)
-      if (!consoleOpen) bubble.say('……', 60000)
-      else hud.setCallSubtitle('……')
-      const reply = await chat(text, {
-        memories: mems,
-        styleRef: ctx.hints,
-        mood: ctx.mood,
-        signal: brainAbort.signal,
-      }, (delta) => {
-        if (mySeq !== brainSeq) return
-        if (!consoleOpen) bubble.say(delta || '……', 60000)
-      })
-      if (mySeq !== brainSeq) return
-      if (reply) { sayLine(reply, undefined, { mood: ctx.mood }); return }
-    }
-    hud.sysLog('LLM 内核离线，临时使用本地台词库')
-    sayLine(dialogue.respond(text))
-  }
-
-  let modelTapHandled = false
-  const petHooks = {
-    onLoaded: async () => {
-      hud.sysLog(`记忆数据同步完成（${MODELS[modelIndex].name}）`)
-      hud.setLinkStatus(true)
-      { const v = viewportSize(); pet?.resize(v.w, v.h) }
-      if (firstLoad) return
-      firstLoad = true
-      await bootDone
-      sayLine(dialogue.amadeusAware(), 3600)
-      if (settings.get('idleChat')) {
-        dialogue.startIdle((line) => {
-          if (Math.random() < 0.05) {
-            hud.dRine(dialogue.dRineLine())
-            hud.sysLog('收到 D-Rine 消息')
-          } else sayLine(line)
-        })
+    const input = String(text || '').trim()
+    if (!input || busy) return
+    busy = true
+    thinking()
+    try {
+      let reply = ''
+      let mood = 'normal'
+      if (usingRemoteApi()) {
+        try {
+          reply = await chat(input)
+        } catch (error) {
+          hud.sysLog(`LLM 请求失败：${error?.message || error}`)
+        }
       }
-    },
-    onTap({ hit }) {
-      if (!hit) return
-      modelTapHandled = true
-      if (hit.area === 'head' || hit.area === 'mouth') hit.model.setRandomExpression()
-      else hit.model.startRandomMotion(Define.MotionGroupTapBody, Define.PriorityNormal)
-      sayLine(dialogue.clickLine())
-    },
-  }
-
-  async function getApp(format) {
-    if (format === 'cubism2') {
-      canvas2.style.display = 'block'; canvas5.style.display = 'none'
-      if (!app2) app2 = await createPetAppCubism2(canvas2, petHooks)
-      return app2
+      if (!reply) {
+        const fallback = dialogue.bankHints?.(input)
+        mood = fallback?.mood || 'normal'
+        reply = dialogue.respond(input)
+        if (!usingRemoteApi()) hud.sysLog('未配置远程 LLM，使用本地台词库')
+      }
+      await speakReply(reply, mood)
+    } finally {
+      busy = false
+      setMouth(0)
     }
-    canvas5.style.display = 'block'; canvas2.style.display = 'none'
-    if (!app5) app5 = await createPetApp(canvas5, petHooks)
-    return app5
-  }
-
-  async function switchModel() {
-    modelIndex = (modelIndex + 1) % MODELS.length
-    const m = MODELS[modelIndex]
-    hud.sysLog(`切换记忆数据：${m.name}`)
-    pet = await getApp(m.format)
-    { const v = viewportSize(); pet.resize(v.w, v.h) }
-    pet.loadModel(m.dir, m.json)
   }
 
   const hud = mountHud(hudRoot, {
     onToggle(open) {
       consoleOpen = open
-      interactions.setConsoleOpen(open)
       document.body.classList.toggle('console-open', open)
     },
     onCommand(text) { brain(text) },
-    onPark() { ipc?.snapBottom(); sayLine(dialogue.parkLine()) },
-    onResize(dir) {
-      const s = Math.min(1.5, Math.max(0.6, (settings.get('scale') || 1) + dir * 0.05))
-      settings.set('scale', s); interactions.setHitScale(s); hud.sysLog(`显示倍率 ${s.toFixed(2)}`)
-    },
-    onOpacity(dir) {
-      const o = Math.min(1, Math.max(0.2, (settings.get('opacity') ?? 1) + dir * 0.1))
-      settings.set('opacity', o); hud.sysLog(`不透明度 ${Math.round(o * 100)}%`)
-    },
+    onPark() {},
+    onResize() {},
+    onOpacity() {},
     onVoice() {
       const next = settings.get('voice') === false
       settings.set('voice', next)
       hud.setVoiceState(next)
-      hud.sysLog(next ? '原版语音反应已开启' : '语音输出已关闭')
+      if (!next) stopVoicePlayback()
+      hud.sysLog(next ? '角色语音已开启' : '角色语音已关闭')
     },
-    onModel() { switchModel() },
+    onModel() { hud.sysLog('iOS 产品构建固定使用 Kurisu / Cubism2') },
     onQuickReply(text) { brain(text) },
-    onTab(tab) { currentTab = tab; document.body.classList.toggle('call-mode', tab === 'call') },
+    onTab(tab) { document.body.classList.toggle('call-mode', tab === 'call') },
     onIncoming(action) {
-      if (action === 'accept') { hud.setCallState('active'); sayLine(dialogue.amadeusAware()) }
+      if (action === 'accept') { hud.setCallState('active'); playRingTone() }
     },
-    onQuit() { ipc?.quit() },
+    onQuit() {},
   })
 
   const mobileUi = isIOS ? mountMobileUi(hudRoot, {
-    onSend(text) { hud.userLog(text); hud.rineUser(text); brain(text) },
-    onVoiceState() { hud.sysLog('iOS 语音输入已停用；将在 Android 版本接入') },
+    onSend(text) {
+      if (busy) { hud.sysLog('上一条回复仍在发声，请稍候'); return }
+      hud.userLog(text)
+      hud.rineUser(text)
+      brain(text)
+    },
+    onVoiceState(on) { hud.sysLog(on ? 'iOS 中文语音识别中…' : 'iOS 语音识别空闲') },
   }) : null
 
-  hud.setVoiceState(settings.get('voice') !== false && voiceAvailable())
+  hud.setVoiceState(settings.get('voice') !== false)
+  hud.setLinkStatus(false, 'LINKING')
 
-  const interactions = mountInteractions(stage, {
-    onClick() {
-      if (modelTapHandled) { modelTapHandled = false; return }
-      sayLine(dialogue.clickLine())
-    },
-    onDragStart() {
-      modelTapHandled = false
-      if (!consoleOpen) bubble.say(dialogue.dragLine(), 2600)
-    },
-    onDoubleClick() { ipc?.snapBottom(); hud.sysLog('双击：已停靠屏幕底部') },
-  })
-
-  {
-    const consoleEl = hud.el.querySelector('.hud-console')
-    let cDrag = false, cLastX = 0, cLastY = 0
-    const cSkip = (e) => e.target.closest('button, input, textarea, a, select, .hud-log, .rine-log, .diary-log, .hud-tabs, .hud-header, .hud-footer')
-    consoleEl.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || cSkip(e)) return
-      cDrag = true; cLastX = e.screenX; cLastY = e.screenY; ipc?.dragStart()
+  const bootDone = new Promise((resolve) => {
+    mountBoot(hudRoot, {
+      onConnect: resolve,
+      onCancel: () => {
+        hud.setLinkStatus(false, 'DISCONNECTED')
+        hud.setCallSubtitle('Disconnected.')
+      },
     })
-    consoleEl.addEventListener('pointermove', (e) => {
-      if (!cDrag) return
-      if (e.screenX !== cLastX || e.screenY !== cLastY) ipc?.dragMove()
-      cLastX = e.screenX; cLastY = e.screenY
-    })
-    const cEnd = () => { if (!cDrag) return; cDrag = false; ipc?.dragEnd() }
-    consoleEl.addEventListener('pointerup', cEnd)
-    consoleEl.addEventListener('pointercancel', cEnd)
-  }
-
-  const chatForm = document.getElementById('chat-form')
-  const chatInput = document.getElementById('chat-input')
-  function sendChat(text) {
-    chatInput.value = ''; hud.userLog(text); hud.rineUser(text); brain(text)
-  }
-  chatForm.addEventListener('submit', (e) => {
-    e.preventDefault(); const text = chatInput.value.trim(); if (text) sendChat(text)
-  })
-  chatForm.addEventListener('pointerdown', (e) => {
-    e.stopPropagation(); ipc?.focus(); chatInput.focus()
-  })
-  window.addEventListener('keydown', (e) => {
-    if (document.body.classList.contains('console-open')) return
-    const t = e.target
-    if (t === chatInput || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      chatInput.focus(); chatInput.value += e.key; e.preventDefault()
-    } else if (e.key === 'Enter') {
-      const text = chatInput.value.trim(); if (text) sendChat(text); e.preventDefault()
-    } else if (e.key === 'Backspace') {
-      chatInput.focus(); chatInput.value = chatInput.value.slice(0, -1); e.preventDefault()
-    }
   })
 
-  hud.sysLog('AMA·DEUS 启动中…')
-  hud.sysLog('正在建立记忆数据链路…')
-  hud.sysLog(isIOS ? 'iOS：仅匹配原版语音反应；未命中时保持纯文字' : '语音模块初始化完成')
+  app = await createPetAppCubism2(canvas, {
+    onTap: ({ hit }) => playTouch(hit),
+    onLoaded: () => hud.sysLog('Kurisu / Cubism2 载入完成'),
+  })
+  pet = app.getManager()
+  resize()
+  await app.loadModel(MODEL_DIR, MODEL_FILE)
+  resize()
 
-  pet = await getApp(MODELS[modelIndex].format)
-  { const v = viewportSize(); pet.resize(v.w, v.h) }
-  pet.loadModel(MODELS[modelIndex].dir, MODELS[modelIndex].json)
+  const syncViewport = () => setTimeout(resize, 60)
+  window.addEventListener('resize', syncViewport)
+  window.addEventListener('orientationchange', syncViewport)
 
-  if (isIOS) {
-    let resizeTimer = null
-    const syncViewport = () => {
-      clearTimeout(resizeTimer)
-      resizeTimer = setTimeout(() => { const v = viewportSize(); pet?.resize(v.w, v.h) }, 80)
-    }
-    window.addEventListener('resize', syncViewport)
-    window.addEventListener('orientationchange', syncViewport)
+  await bootDone
+  hud.toggleConsole(true)
+  hud.setTab('call')
+  hud.setCallState('active')
+  hud.setLinkStatus(true, 'LINK OK')
+  hud.sysLog('iOS core synced with main: LLM / OGG router / Kurisu TTS / lipsync ready')
+  hud.sysLog('语言链路：中文输入 / 中文字幕 → 日语角色语音')
+
+  busy = true
+  try {
+    presentLine('Connection established.', { log: false, rine: false })
+    let resolveEnd
+    const ended = new Promise((resolve) => { resolveEnd = resolve })
+    const hello = await playReferenceVoice('hello', { onLevel: setMouth, onEnd: () => resolveEnd() })
+    if (hello.played) await ended
+  } finally {
+    busy = false
+    setMouth(0)
   }
 
-  window.__amaPet = { pet, hud, bubble, settings, mobileUi }
-
-  if (location.hash === '#call') setTimeout(() => { hud.toggleConsole(true); hud.setTab('call') }, 3500)
-  else if (location.hash === '#rine') setTimeout(() => { hud.toggleConsole(true); hud.setTab('rine') }, 3500)
-  else if (location.hash === '#diary') setTimeout(() => { hud.toggleConsole(true); hud.setTab('diary') }, 3500)
-  else if (location.hash === '#m1') setTimeout(() => switchModel(), 4000)
-
-  function scheduleProactive() {
-    setTimeout(() => {
-      if (settings.get('idleChat') && !consoleOpen) sayLine(dialogue.proactiveLine())
-      scheduleProactive()
-    }, 10 * 60000 + Math.random() * 10 * 60000)
+  if (usingRemoteApi()) {
+    checkServer().then((ok) => hud.sysLog(ok ? 'LLM API 已连接' : 'LLM API 配置存在，但当前连接失败'))
   }
-  scheduleProactive()
 
-  function scheduleIncoming() {
-    setTimeout(() => { hud.incomingCall(); playRingTone(); scheduleIncoming() }, 20 * 60000 + Math.random() * 20 * 60000)
-  }
-  scheduleIncoming()
-
-  async function llmWatch() {
-    const ok = await checkServer()
-    const was = window.__llmState
-    if (ok !== was) {
-      window.__llmState = ok
-      hud.sysLog(ok ? 'LLM 内核已连接（灵魂注入完成）' : 'LLM 内核离线，使用本地台词库')
-    }
-    setTimeout(llmWatch, 30000)
-  }
-  llmWatch()
+  window.__amaPet = { pet, hud, bubble, settings, mobileUi, brain }
+  window.addEventListener('beforeunload', () => app?.dispose?.())
 }
 
 boot().catch((err) => {
   console.error(err)
   const el = document.createElement('div')
-  el.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#ffb0b0;font:14px monospace;padding:20px;text-align:center;background:rgba(10,20,40,.9)'
-  el.textContent = `启动失败：${err.message}`
+  el.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#ffb0b0;font:14px monospace;padding:20px;text-align:center;background:rgba(10,20,40,.96);z-index:9999'
+  el.textContent = `启动失败：${err?.message || err}`
   document.body.appendChild(el)
 })
