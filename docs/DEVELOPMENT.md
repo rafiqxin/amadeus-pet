@@ -112,6 +112,7 @@ python voice-server/verify.py --url http://127.0.0.1:9881
 | `LookupError: averaged_perceptron_tagger_eng` | NLTK 数据缺失，见 `ROADMAP.md` Phase 2e。日语译文里出现拉丁字母（如 `CTC`）时才会触发 |
 | 翻译/分类返回空 | LLM 是推理模型且未关闭思考，见 `ARCHITECTURE.md` §8 |
 | 窗口拖动时缓慢变大 | 不应再出现。设 `AMA_TRACE_BOUNDS=1` 看尺寸日志定位 |
+| 本地能构建，CI 报 `Could not resolve './xxx.js'` | 该文件被 `.gitignore` 里的**裸目录名**（如 `llm/`）误伤，从未提交。改用 `/llm/` 锚定根目录，并对比 `git ls-files src` 与盘上的文件 |
 | 合成很慢 | 正常：约 0.1 s / 日语字符（RTX 4060）。700 字约 70 s |
 
 ## 8. 构建产物

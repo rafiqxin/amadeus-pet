@@ -385,6 +385,32 @@ tick()   // 直接 return，且没有再排队 → 循环永远不启动
 间歇，且比例由 CSS 维持为 9:16），不是 Phase 2d 那个 resize 风暴。两者要靠
 "是否间歇"和"比例是否保持"来区分。
 
+**顺带修掉的两个仓库级问题**：
+
+1. **Android 工作流从没在本分支跑过**。`build-android-apk.yml` 的
+   `on.push.branches` 只列了 `chatgpt/amadeus-voice-workspace`，本分支推了两次
+   都是 0 个 workflow。已加上 `chatgpt/amadeus-core-workspace`。
+2. **仓库此前根本构建不起来**。工作流第一次真正跑起来就卡在 "Build renderer"：
+
+   ```
+   [UNRESOLVED_IMPORT] Could not resolve './llm/client.js' in src/main.js
+   ```
+
+   本地一直是好的，所以没人怀疑过它。根因是 `.gitignore` 第 6 行写了个裸的
+   `llm/`——该模式匹配**任意层级**同名目录，于是把 `src/llm/` 一起吞了，整个
+   LLM 层（对话、OGG 分类、中译日）从未进过任何一次提交，`aa7db89` 和
+   `19af2fc` 都缺这个文件。改成 `/llm/` 锚定根目录即可。
+
+   把"盘上所有文件"和 `git ls-files` 对了一遍、并把每个相对 import 都解析了一遍
+   之后确认：源码里只有它一个受害者，其余被忽略的都是有意为之（45 条 OGG、
+   legacy 示例模型、生成的验证音频）。
+
+   **教训**：`.gitignore` 里不要写裸目录名。再加一条 CI 之外的自检——
+   `git ls-files src | wc -l` 与盘上对不上就是同类事故。
+
+修完后本分支第一次绿灯：19 个步骤全过，含 "Build renderer"、"Build debug APK"、
+"Package APK"。
+
 ### Phase 3 — Android alpha.9「真正 AI 发声」 【P1】
 
 **完整链路**：
