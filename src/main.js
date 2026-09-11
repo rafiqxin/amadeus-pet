@@ -393,6 +393,33 @@ async function boot() {
       hud.setCallSubtitle('这是用于 iOS WKWebView 实机滚动回归测试的长文本。'.repeat(80))
       await wait(250)
       updateTestProbe()
+      /* XCUITest cannot drive this gesture: an instrumented run showed an
+         XCUITest drag reaching the page as neither touch nor pointer events
+         (touch=0/0/0), so waiting for one to arrive only ever times out. The
+         drag is therefore synthesized in-page from the same pointer sequence a
+         finger produces. That covers what the scroller owns — the document-level
+         listener, the rect hit-test and the scroll math. Platform gesture
+         delivery is not covered by this test and is not claimed to be. */
+      await wait(150)
+      const transcript = document.querySelector('.call-subtitle')
+      if (transcript && transcript.scrollHeight > transcript.clientHeight + 2) {
+        const rect = transcript.getBoundingClientRect()
+        const x = Math.round(rect.left + rect.width / 2)
+        const startY = Math.round(rect.bottom - 30)
+        const fire = (type, y, buttons) => {
+          const target = type === 'pointerdown' ? document : window
+          target.dispatchEvent(new PointerEvent(type, {
+            bubbles: true, cancelable: true, composed: true,
+            clientX: x, clientY: y, pointerId: 1, pointerType: 'touch',
+            isPrimary: true, buttons,
+          }))
+        }
+        fire('pointerdown', startY, 1)
+        for (let step = 1; step <= 10; step += 1) fire('pointermove', startY - step * 12, 1)
+        fire('pointerup', startY - 120, 0)
+        await wait(120)
+      }
+      updateTestProbe()
     }
     if (uiTestMode === 'tts') {
       await wait(150)
