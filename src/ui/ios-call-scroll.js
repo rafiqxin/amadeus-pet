@@ -19,6 +19,7 @@ export function mountIosCallTranscriptScroll(root = document) {
 
   let touchY = null
   let touchTop = 0
+  let touchId = null
   let lastText = el.textContent || ''
   let raf = 0
 
@@ -59,26 +60,42 @@ export function mountIosCallTranscriptScroll(root = document) {
     if (el.scrollTop !== before) event.preventDefault()
   }
 
-  /* WKWebView does not always deliver a scroll gesture to this element: the CALL
-     HUD sits above the Live2D canvas and some of its layers are pointer-events:
-     none. Tracking a single finger and writing scrollTop directly keeps the
-     gesture working regardless of what the compositor decides to hit-test. */
-  const onTouchStart = (event) => {
-    if (event.touches?.length !== 1) return
-    touchY = event.touches[0].clientY
+  /* WKWebView does not reliably deliver a touch to this element. It sits inside
+     `.hud-call`/`.hud-console`, which are `pointer-events: none` so the Live2D
+     canvas underneath stays tappable, and the compositor's gesture routing does
+     not follow the element's own `pointer-events: auto` override. The transcript
+     has no drawn scrollbar any more, so there is no widget to hit either.
+     Measured on the Simulator: a drag at the transcript's own centre produced
+     scrollTop 0 with the element scrollable (max=2187).
+     The pattern that does work — and that the removed thumb used — is to take
+     the gesture at document capture level and hit-test by geometry. */
+  const onDocumentTouchStart = (event) => {
+    if (event.touches?.length !== 1 || !scrollable()) return
+    const touch = event.touches[0]
+    const rect = el.getBoundingClientRect()
+    if (touch.clientX < rect.left || touch.clientX > rect.right) return
+    if (touch.clientY < rect.top || touch.clientY > rect.bottom) return
+    touchY = touch.clientY
     touchTop = el.scrollTop
+    touchId = touch.identifier
   }
 
-  const onTouchMove = (event) => {
-    if (touchY == null || event.touches?.length !== 1 || !scrollable()) return
-    const delta = touchY - event.touches[0].clientY
+  const onWindowTouchMove = (event) => {
+    if (touchY == null || event.touches?.length !== 1) return
+    const touch = Array.from(event.touches).find((item) => item.identifier === touchId)
+    if (!touch) return
+    const delta = touchY - touch.clientY
     const max = maxScroll()
     const next = Math.max(0, Math.min(max, touchTop + delta))
     if (next !== el.scrollTop) el.scrollTop = next
     event.preventDefault()
   }
 
-  const endTouch = () => { touchY = null }
+  const onWindowTouchEnd = (event) => {
+    if (touchY == null) return
+    const stillActive = Array.from(event.touches || []).some((item) => item.identifier === touchId)
+    if (!stillActive) { touchY = null; touchId = null }
+  }
 
   const observer = new MutationObserver(scheduleRefresh)
   observer.observe(el, { childList: true, characterData: true, subtree: true })
@@ -91,10 +108,10 @@ export function mountIosCallTranscriptScroll(root = document) {
 
   el.addEventListener('scroll', emitScrollState, { passive: true })
   el.addEventListener('wheel', onWheel, { passive: false })
-  el.addEventListener('touchstart', onTouchStart, { passive: true })
-  el.addEventListener('touchmove', onTouchMove, { passive: false })
-  el.addEventListener('touchend', endTouch, { passive: true })
-  el.addEventListener('touchcancel', endTouch, { passive: true })
+  document.addEventListener('touchstart', onDocumentTouchStart, { capture: true, passive: true })
+  window.addEventListener('touchmove', onWindowTouchMove, { capture: true, passive: false })
+  window.addEventListener('touchend', onWindowTouchEnd, { capture: true, passive: true })
+  window.addEventListener('touchcancel', onWindowTouchEnd, { capture: true, passive: true })
   window.addEventListener('resize', scheduleRefresh)
   refresh()
 
@@ -104,10 +121,10 @@ export function mountIosCallTranscriptScroll(root = document) {
     resizeObserver?.disconnect?.()
     el.removeEventListener('scroll', emitScrollState)
     el.removeEventListener('wheel', onWheel)
-    el.removeEventListener('touchstart', onTouchStart)
-    el.removeEventListener('touchmove', onTouchMove)
-    el.removeEventListener('touchend', endTouch)
-    el.removeEventListener('touchcancel', endTouch)
+    document.removeEventListener('touchstart', onDocumentTouchStart, true)
+    window.removeEventListener('touchmove', onWindowTouchMove, true)
+    window.removeEventListener('touchend', onWindowTouchEnd, true)
+    window.removeEventListener('touchcancel', onWindowTouchEnd, true)
     window.removeEventListener('resize', scheduleRefresh)
   }
 }

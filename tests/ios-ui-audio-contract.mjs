@@ -32,8 +32,10 @@ assert.match(scrollCss, /\.call-subtitle\s*\{[\s\S]*?-webkit-overflow-scrolling:
 assert.match(scrollCss, /\.call-subtitle::-webkit-scrollbar\s*\{[\s\S]*?width:\s*0/,
   'no scrollbar may be painted over the CALL frame')
 
-assert.match(scrollSource, /el\.addEventListener\('touchmove', onTouchMove, \{ passive: false \}\)/,
-  'the transcript must translate a finger drag itself: WKWebView does not reliably deliver the gesture past a pointer-events:none HUD')
+assert.match(scrollSource, /document\.addEventListener\('touchstart', onDocumentTouchStart, \{ capture: true, passive: true \}\)/,
+  'WKWebView does not deliver the touch to the transcript itself, so the gesture is claimed at document capture level and hit-tested by geometry')
+assert.match(scrollSource, /window\.addEventListener\('touchmove', onWindowTouchMove, \{ capture: true, passive: false \}\)/,
+  'drag ownership must continue at window capture level so the scroll is not dropped mid-gesture')
 assert.match(scrollSource, /const next = Math\.max\(0, Math\.min\(max, touchTop \+ delta\)\)/,
   'finger scrolling must clamp to the scrollable range')
 assert.match(scrollSource, /el\.addEventListener\('wheel', onWheel, \{ passive: false \}\)/,
