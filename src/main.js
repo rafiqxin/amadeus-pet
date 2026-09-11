@@ -52,6 +52,10 @@ async function boot() {
       document.body.appendChild(testProbe)
     }
     testProbe.textContent = `AMA_TEST_PROBE ready=${testState.ready} reactions=${testState.reactions} audio=${testState.audio} scroll=${Math.round(testState.scroll)} max=${Math.round(testState.max)} scrollable=${testState.scrollable} scrolled=${testState.scrolled} voice=${testState.voice}`
+    // XCUITest cannot reliably see arbitrary DOM text inside WKWebView. Mirror
+    // the same state through a test-only native script-message bridge; the
+    // harness exposes it as a UILabel accessibility element.
+    try { window.webkit?.messageHandlers?.amaTest?.postMessage({ ...testState }) } catch {}
   }
   const onDiagnostic = (event) => {
     if (!uiTest) return

@@ -11,8 +11,8 @@ final class AmadeusUITests: XCTestCase {
         app.launch()
         let web = app.webViews.firstMatch
         XCTAssertTrue(web.waitForExistence(timeout: 20), "WKWebView did not appear")
-        let probe = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'AMA_TEST_PROBE'" )).firstMatch
-        XCTAssertTrue(probe.waitForExistence(timeout: 25), "JS test probe did not appear")
+        let probe = app.staticTexts["AMA_TEST_PROBE"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 15), "native JS probe bridge did not appear")
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS 'ready=1'"), object: probe)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 25), .completed, "renderer never became ready: \(probe.label)")
         return (app, web, probe)
